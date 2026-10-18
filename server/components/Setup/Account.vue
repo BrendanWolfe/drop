@@ -62,6 +62,14 @@
               </template>
             </i18n-t>
           </LoadingButton>
+          <NuxtLink
+            v-if="registrationUrl && !complete"
+            :to="registrationUrl"
+            target="_blank"
+            class="mt-3 inline-flex text-sm font-semibold text-blue-500 hover:text-blue-600"
+          >
+            {{ $t("setup.auth.simple.register") }}
+          </NuxtLink>
         </div>
       </div>
       <div class="p-4 border-1 border-zinc-800 rounded-xl">
@@ -104,7 +112,7 @@
             class="mt-4"
             :loading="false"
             :disabled="!enabledAuth.OpenID"
-            @click="() => (complete = true)"
+            @click="signInWithOpenID"
           >
             <i18n-t
               keypath="setup.auth.openid.skip"
@@ -117,6 +125,14 @@
               </template>
             </i18n-t>
           </LoadingButton>
+          <NuxtLink
+            v-if="enabledAuth.OpenID && !complete"
+            to="/auth/signin"
+            target="_blank"
+            class="mt-3 inline-flex text-sm font-semibold text-blue-500 hover:text-blue-600"
+          >
+            {{ $t("auth.signin.signin") }}
+          </NuxtLink>
         </div>
       </div>
     </div>
@@ -136,24 +152,67 @@ const complete = defineModel<boolean>({ required: true });
 const { token } = defineProps<{ token: string }>();
 
 const invitationLoading = ref(false);
+const registrationUrl = ref<string | undefined>(undefined);
+let pollTimer: ReturnType<typeof setInterval> | undefined;
 
 const enabledAuth = await $dropFetch("/api/v1/admin/auth", {
   headers: { Authorization: token },
 });
 
+function stopPolling() {
+  if (pollTimer === undefined) return;
+  clearInterval(pollTimer);
+  pollTimer = undefined;
+}
+
+async function checkAccountCreated() {
+  const status = await $dropFetch<{ hasAdmin: boolean }>(
+    "/api/v1/admin/setup/status",
+    { headers: { Authorization: token } },
+  );
+  if (!status.hasAdmin) return;
+
+  complete.value = true;
+  stopPolling();
+}
+
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(() => {
+    checkAccountCreated().catch(() => {});
+  }, 1500);
+}
+
+onMounted(() => {
+  checkAccountCreated().catch(() => {});
+});
+
+onBeforeUnmount(stopPolling);
+
+function signInWithOpenID() {
+  window.open("/auth/signin", "_blank")?.focus();
+  startPolling();
+  checkAccountCreated().catch(() => {});
+}
+
 async function registerAsAdmin() {
   invitationLoading.value = true;
-  const expiryDate = DateTime.now().plus({ year: 5000 }).toJSON();
+  try {
+    const expiryDate = DateTime.now().plus({ year: 5000 }).toJSON();
 
-  const invitation = await $dropFetch("/api/v1/admin/auth/invitation", {
-    method: "POST",
-    body: { isAdmin: true, expires: expiryDate },
-    headers: { Authorization: token },
-    failTitle: "Failed to create admin invitation",
-  });
+    const invitation = await $dropFetch("/api/v1/admin/auth/invitation", {
+      method: "POST",
+      body: { isAdmin: true, expires: expiryDate },
+      headers: { Authorization: token },
+      failTitle: "Failed to create admin invitation",
+    });
 
-  window.open(`${invitation.inviteUrl}&after=close`, "_blank")?.focus();
-  invitationLoading.value = false;
-  complete.value = true;
+    registrationUrl.value = invitation.inviteUrl;
+    window.open(`${invitation.inviteUrl}&after=close`, "_blank")?.focus();
+    startPolling();
+    checkAccountCreated().catch(() => {});
+  } finally {
+    invitationLoading.value = false;
+  }
 }
 </script>

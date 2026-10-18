@@ -53,17 +53,19 @@ pub trait Reader: Handle {
         let mut size = 0;
         let mut offset = 0;
 
-        unsafe {
-            match ffi::archive_read_data_block(self.handle(), &mut buff, &mut size, &mut offset) {
-                ffi::ARCHIVE_EOF => Ok(None),
-                ffi::ARCHIVE_OK => {
-                    if buff != ptr::null() {
-                        Ok(Some(slice::from_raw_parts(buff as *const u8, size)))
-                    } else {
-                        return self.read_block();
+        loop {
+            unsafe {
+                match ffi::archive_read_data_block(self.handle(), &mut buff, &mut size, &mut offset)
+                {
+                    ffi::ARCHIVE_EOF => return Ok(None),
+                    ffi::ARCHIVE_OK => {
+                        // Decompressors can emit empty blocks before the end of an entry.
+                        if !buff.is_null() && size > 0 {
+                            return Ok(Some(slice::from_raw_parts(buff as *const u8, size)));
+                        }
                     }
+                    _ => return Err(ArchiveError::Sys(self.err_code(), self.err_msg())),
                 }
-                _ => Err(ArchiveError::Sys(self.err_code(), self.err_msg())),
             }
         }
     }

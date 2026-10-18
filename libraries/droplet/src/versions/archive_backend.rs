@@ -39,43 +39,34 @@ impl AsyncRead for ArchiveReader {
         _cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
+        if buf.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+
         if let Some(block) = &mut self.prev_block {
             let to_read = buf.remaining().min(block.len());
             buf.put_slice(&block[..to_read]);
             block.drain(..to_read);
 
-            // If the block is empty, we can read more
             if block.is_empty() {
                 self.prev_block = None;
-            } else {
-                return Poll::Ready(Ok(()));
             }
+
+            return Poll::Ready(Ok(()));
         }
-        let prev_block_update = {
-            let block = match self.archive.read_block() {
-                Ok(v) => v,
-                Err(err) => return Poll::Ready(Err(std::io::Error::other(err.to_string()))),
-            };
 
-            let mut block = match block {
-                Some(v) => v,
-                None => return Poll::Ready(Ok(())),
-            };
-
-            let write_amount = buf.remaining().min(block.len());
-            let to_write = block.split_off(..write_amount);
-            let to_write = to_write.unwrap(); // SAFETY: above .min statement
-            buf.put_slice(to_write);
-
-            if !block.is_empty() {
-                Some(block[buf.remaining()..].to_vec())
-            } else {
-                None
-            }
+        let block = match self.archive.read_block() {
+            Ok(Some(v)) => v,
+            Ok(None) => return Poll::Ready(Ok(())),
+            Err(err) => return Poll::Ready(Err(std::io::Error::other(err.to_string()))),
         };
 
-        if let Some(prev_block) = prev_block_update {
-            self.prev_block.replace(prev_block);
+        let write_amount = buf.remaining().min(block.len());
+        let (prefix, suffix) = block.split_at(write_amount);
+        buf.put_slice(prefix);
+
+        if !suffix.is_empty() {
+            self.prev_block = Some(suffix.to_vec());
         }
 
         Poll::Ready(Ok(()))

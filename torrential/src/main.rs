@@ -76,7 +76,7 @@ async fn main() {
 fn setup_app(shared_state: Arc<AppState>) -> Router {
     Router::new()
         .route(
-            "/api/v1/depot/content/{game_id}/{version_name}/{chunk_id}",
+            "/api/v1/depot/content/{game_id}/{version_id}/{chunk_id}",
             get(serve::serve_file),
         )
         .route("/api/v1/depot/manifest.json", get(handlers::manifest))

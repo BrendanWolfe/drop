@@ -246,17 +246,27 @@ where
     Writer: AsyncWrite + Unpin,
 {
     let mut reader = backend.reader(file, start, start + length).await?;
+    let mut read_total = 0u64;
 
-    loop {
-        let amount = reader.read(read_buf).await?;
+    while read_total < length {
+        let remaining = length - read_total;
+        let buffer_len = remaining.min(read_buf.len() as u64) as usize;
+        let amount = reader.read(&mut read_buf[..buffer_len]).await?;
 
         if amount == 0 {
-            break;
+            return Err(anyhow!(
+                "unexpected EOF reading {}: expected {} bytes starting at offset {}, got {}",
+                file.relative_filename,
+                length,
+                start,
+                read_total
+            ));
         }
         if let Some(writer) = writer.as_mut() {
             writer.write_all(&read_buf[0..amount]).await?;
         }
         hasher.update(&read_buf[0..amount]);
+        read_total += amount as u64;
     }
 
     Ok(FileEntry {
@@ -265,4 +275,132 @@ where
         length: length.try_into().unwrap(),
         permissions: file.permission,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+    use crate::versions::types::MinimumFileObject;
+
+    struct MockBackend {
+        data: Vec<u8>,
+    }
+
+    #[async_trait]
+    impl VersionBackend for MockBackend {
+        fn require_whole_files(&self) -> bool {
+            false
+        }
+
+        async fn list_files(&self) -> anyhow::Result<Vec<VersionFile>> {
+            Ok(Vec::new())
+        }
+
+        async fn peek_file(&self, _sub_path: String) -> anyhow::Result<VersionFile> {
+            Err(anyhow::anyhow!("not implemented"))
+        }
+
+        async fn reader(
+            &self,
+            _file: &VersionFile,
+            start: u64,
+            _end: u64,
+        ) -> anyhow::Result<Box<dyn MinimumFileObject>> {
+            let start = (start as usize).min(self.data.len());
+            Ok(Box::new(Cursor::new(self.data[start..].to_vec())))
+        }
+    }
+
+    fn version_file(size: u64) -> VersionFile {
+        VersionFile {
+            relative_filename: "file.bin".to_string(),
+            permission: 0o644,
+            size,
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_truncated_input() {
+        let backend = MockBackend {
+            data: b"abc".to_vec(),
+        };
+        let file = version_file(5);
+        let mut hasher = Sha256::new();
+        let mut read_buf = vec![0u8; 64];
+        let mut writer: Option<Vec<u8>> = None;
+
+        let err = read_and_generate_chunk_file_data(
+            &backend,
+            &file,
+            0,
+            5,
+            &mut hasher,
+            &mut read_buf,
+            &mut writer,
+        )
+        .await
+        .err()
+        .expect("truncated input should be rejected");
+
+        let message = err.to_string();
+        assert!(message.contains("unexpected EOF"), "{message}");
+        assert!(message.contains("expected 5 bytes"), "{message}");
+        assert!(message.contains("got 3"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn reads_exact_expected_length() {
+        let data = b"correct input".to_vec();
+        let backend = MockBackend {
+            data: b"correct input followed by bytes outside the chunk".to_vec(),
+        };
+        let file = version_file(data.len() as u64);
+        let mut hasher = Sha256::new();
+        let mut read_buf = vec![0u8; 4];
+        let mut writer = Some(Vec::new());
+
+        let entry = read_and_generate_chunk_file_data(
+            &backend,
+            &file,
+            0,
+            data.len() as u64,
+            &mut hasher,
+            &mut read_buf,
+            &mut writer,
+        )
+        .await
+        .expect("correct input should be read");
+
+        assert_eq!(entry.filename, "file.bin");
+        assert_eq!(entry.length, data.len());
+        assert_eq!(writer.unwrap(), data);
+        assert_eq!(hasher.finalize(), Sha256::digest(b"correct input"));
+    }
+
+    #[tokio::test]
+    async fn accepts_zero_length() {
+        let backend = MockBackend { data: Vec::new() };
+        let file = version_file(0);
+        let mut hasher = Sha256::new();
+        let mut read_buf = vec![0u8; 64];
+        let mut writer = Some(Vec::new());
+
+        let entry = read_and_generate_chunk_file_data(
+            &backend,
+            &file,
+            0,
+            0,
+            &mut hasher,
+            &mut read_buf,
+            &mut writer,
+        )
+        .await
+        .expect("zero length should be accepted");
+
+        assert_eq!(entry.length, 0);
+        assert_eq!(writer.unwrap(), Vec::<u8>::new());
+        assert_eq!(hasher.finalize(), Sha256::digest([]));
+    }
 }

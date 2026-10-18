@@ -2,10 +2,11 @@
 The purpose of this class is to hold references to remote objects (like images) until they're actually needed
 This is used as a utility in metadata handling, so we only fetch the objects if we're actually creating a database record.
 */
-import type { Readable } from "stream";
+import type { Readable } from "node:stream";
 import { randomUUID } from "node:crypto";
-import objectHandler from ".";
+import objectHandler from "./index.ts";
 import type { TaskRunContext } from "../tasks";
+import { logger } from "../logging/index.ts";
 
 export type TransactionDataType = string | Readable | Buffer;
 type TransactionTable = Map<string, TransactionDataType>; // ID to data
@@ -40,24 +41,38 @@ export class ObjectTransactionalHandler {
 
       let progress = 0;
       const increment = 100 / transaction.size;
+      const taskLogger = context?.logger ?? logger;
 
       for (const [id, data] of transaction) {
+        let source: Readable | Buffer;
+
         if (typeof data === "string") {
-          context?.logger.info(`Importing object from "${data}"`);
+          taskLogger.info(`Importing object from "${data}"`);
+          try {
+            const remoteSource = await $fetch<ArrayBuffer>(data, {
+              responseType: "arrayBuffer",
+            });
+            source = Buffer.from(remoteSource);
+          } catch (e) {
+            taskLogger.warn(
+              `Failed to download remote object from "${data}", skipping: ${e}`,
+            );
+            progress += increment;
+            context?.progress(progress);
+            continue;
+          }
         } else {
-          context?.logger.info(`Importing raw object...`);
+          taskLogger.info(`Importing raw object...`);
+          source = data;
         }
+
         await objectHandler.createFromSource(
           id,
-          () => {
-            if (typeof data === "string") {
-              return $fetch<Readable>(data, { responseType: "stream" });
-            }
-            return (async () => data)();
-          },
+          async () => source,
           metadata,
           permissions,
         );
+
         progress += increment;
         context?.progress(progress);
       }

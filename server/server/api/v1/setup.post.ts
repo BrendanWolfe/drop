@@ -1,6 +1,6 @@
-import { APITokenMode } from "~/prisma/client/enums";
 import aclManager from "~/server/internal/acls";
 import prisma from "~/server/internal/db/database";
+import { completeSetup } from "~/server/internal/setup";
 
 export default defineEventHandler(async (h3) => {
   const allowed = await aclManager.allowSystemACL(h3, ["setup"]);
@@ -9,12 +9,12 @@ export default defineEventHandler(async (h3) => {
       statusCode: 403,
       statusMessage: "Must use a setup token.",
     });
-  await prisma.aPIToken.deleteMany({
-    where: {
-      mode: APITokenMode.System,
-      acls: {
-        hasSome: ["setup"],
-      },
-    },
-  });
+
+  const completed = await completeSetup(prisma);
+  if (!completed)
+    throw createError({
+      statusCode: 400,
+      statusMessage:
+        "Cannot finish setup until an enabled admin account with an enabled sign-in method exists.",
+    });
 });

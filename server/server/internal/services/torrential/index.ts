@@ -24,6 +24,28 @@ const INTERNAL_DEPOT_URL = new URL(
   process.env.INTERNAL_DEPOT_URL ?? "http://localhost:5000",
 );
 
+function serializeError(error: unknown): string {
+  if (typeof error !== "object" || error === null) return String(error);
+
+  const details = error as {
+    statusCode?: unknown;
+    message?: unknown;
+    statusMessage?: unknown;
+  };
+  const message =
+    typeof details.message === "string" && details.message.length > 0
+      ? details.message
+      : typeof details.statusMessage === "string" &&
+          details.statusMessage.length > 0
+        ? details.statusMessage
+        : String(error);
+
+  if (typeof details.statusCode === "number")
+    return JSON.stringify({ statusCode: details.statusCode, message });
+
+  return message;
+}
+
 export interface QueryProcessor<
   T extends DropBoundType,
   K extends TorrentialBoundType,
@@ -184,7 +206,7 @@ export class TorrentialService extends Service<unknown> {
         type: TorrentialBoundType.ERROR,
         schema: StringValueSchema,
         data: create(StringValueSchema, {
-          value: (e as string).toString(),
+          value: serializeError(e),
         }),
       };
     }

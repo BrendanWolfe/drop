@@ -70,11 +70,11 @@ static FILE_SEMAPHORE: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(*SE
 
 pub async fn serve_file(
     State(state): State<Arc<AppState>>,
-    Path((game_id, version_name, chunk_id)): Path<(String, String, String)>,
+    Path((game_id, version_id, chunk_id)): Path<(String, String, String)>,
 ) -> Result<impl IntoResponse, StatusCode> {
     let context_cache = &state.context_cache;
 
-    let mut context = get_or_create_context(&state, context_cache, game_id, version_name).await?;
+    let mut context = get_or_create_context(&state, context_cache, game_id, version_id).await?;
     context.reset_last_access();
 
     let chunk_data = lookup_chunk(&chunk_id, &context)?;
@@ -168,9 +168,9 @@ async fn get_or_create_context<'a>(
     state: &Arc<AppState>,
     context_cache: &'a DashMap<(String, String), DownloadContext>,
     game_id: String,
-    version_name: String,
+    version_id: String,
 ) -> Result<RefMut<'a, (String, String), DownloadContext>, StatusCode> {
-    let key = (game_id.clone(), version_name.clone());
+    let key = (game_id.clone(), version_id.clone());
 
     if let Some(context) = context_cache.get_mut(&key) {
         Ok(context)
@@ -183,7 +183,7 @@ async fn get_or_create_context<'a>(
         } else {
             info!("generating context for {game_id}...");
             let context_result =
-                create_download_context(state, game_id.clone(), version_name.clone()).await?;
+                create_download_context(state, game_id.clone(), version_id.clone()).await?;
 
             state.context_cache.insert(key.clone(), context_result);
 

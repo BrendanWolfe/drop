@@ -59,9 +59,13 @@ pub async fn list_files_rpc(
 ) -> Result<(), anyhow::Error> {
     let query = ListFilesQuery::parse_from_bytes(&message.data)?;
 
-    let mut backend = create_backend(&query.path)?;
-
-    let files = backend.list_files().await?;
+    let path = query.path;
+    let handle = tokio::runtime::Handle::current();
+    let files = tokio::task::spawn_blocking(move || {
+        let backend = create_backend(&path)?;
+        handle.block_on(backend.list_files())
+    })
+    .await??;
 
     let mut response = ListFilesResponse::new();
     response.files = files.into_iter().map(|v| v.relative_filename).collect();

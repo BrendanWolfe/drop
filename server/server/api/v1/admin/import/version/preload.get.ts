@@ -1,4 +1,5 @@
 import { ArkErrors, type } from "arktype";
+import { isError } from "h3";
 import aclManager from "~/server/internal/acls";
 import libraryManager from "~/server/internal/library";
 
@@ -35,6 +36,8 @@ export default defineEventHandler(async (h3) => {
 
     return preload;
   } catch (e) {
+    if (isError(e)) throw e;
+
     throw createError({
       statusCode: 500,
       message: `Failed to fetch preload information for ${query.id}: ${e}`,

@@ -24,6 +24,86 @@ permissions:
   contents: read
 
 jobs:
+  migrations:
+    name: Migrations (${{ matrix.history }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        history: [fresh, v0.4.0-rc-5]
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: drop
+          POSTGRES_PASSWORD: drop
+          POSTGRES_DB: drop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://drop:drop@localhost:5432/drop
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js environment
+        uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Deploy released migrations before testing the upgrade
+        if: matrix.history != 'fresh'
+        env:
+          RELEASE_TAG: ${{ matrix.history }}
+        run: |
+          mkdir .migration-upgrade
+          git -C .. archive "$RELEASE_TAG" server/prisma | tar -x --strip-components=1 -C .migration-upgrade
+          cp prisma.config.ts .migration-upgrade/prisma.config.ts
+          pnpm exec prisma migrate deploy --config .migration-upgrade/prisma.config.ts
+
+      - name: Deploy current migrations
+        run: pnpm exec prisma migrate deploy
+
+      - name: Check database against the declared schema
+        run: |
+          mkdir .migration-check
+          cp prisma/schema.prisma .migration-check/
+          cp -R prisma/models .migration-check/
+          # Prisma introspection cannot round-trip pg_trgm's siglen parameter.
+          # Normalize only the comparison copy, not the shipped schema or indexes.
+          sed -i 's/gist_trgm_ops(siglen=32)/gist_trgm_ops/g' .migration-check/models/content.prisma
+          pnpm exec prisma migrate diff --from-config-datasource --to-schema .migration-check --exit-code
+
+      - name: Run regression tests
+        run: pnpm test
+
+      - name: Reject changes to existing migrations
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          changes=$(git diff --no-renames --name-only --diff-filter=MD "$BASE_SHA" HEAD -- prisma/migrations)
+          if [ -n "$changes" ]; then
+            printf 'Existing migrations must not be changed; add a new migration instead:\n%s\n' "$changes"
+            exit 1
+          fi
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest

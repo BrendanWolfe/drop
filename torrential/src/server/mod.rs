@@ -2,7 +2,7 @@ use std::{mem, sync::Arc};
 
 use anyhow::anyhow;
 use log::{info, warn};
-use protobuf::{EnumOrUnknown, Message};
+use protobuf::{EnumOrUnknown, Message, well_known_types::wrappers::StringValue};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt as _, BufReader},
     net::{
@@ -22,6 +22,7 @@ use crate::{
         manifest::generate_manifest_rpc,
     },
     proto::core::{DropBound, DropBoundType, TorrentialBound, TorrentialBoundType},
+    util::ServiceError,
 };
 
 pub mod download;
@@ -36,6 +37,11 @@ pub struct DropServer {
     server: TcpListener,
     write_stream: Mutex<OwnedWriteHalf>,
     waitmap: WaitMap<String, TorrentialBound>,
+}
+
+fn decode_error_payload(data: &[u8]) -> Result<ServiceError, anyhow::Error> {
+    let payload = StringValue::parse_from_bytes(data)?;
+    Ok(ServiceError::from_payload(payload.value))
 }
 
 impl DropServer {
@@ -131,7 +137,7 @@ impl DropServer {
         let message = message.value();
 
         if message.type_.unwrap() == crate::proto::core::TorrentialBoundType::ERROR {
-            Err(anyhow!(String::from_utf8(message.data.clone()).unwrap()))
+            Err(decode_error_payload(&message.data)?.into())
         } else {
             let response = T::parse_from_bytes(&message.data)?;
             Ok(response)
@@ -191,4 +197,34 @@ pub async fn create_drop_server() -> Result<Arc<DropServer>, anyhow::Error> {
     info!("created client subroutine");
 
     Ok(client)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::ErrorOption;
+    use reqwest::StatusCode;
+
+    #[test]
+    fn error_payload_is_decoded_from_wire_format() {
+        let message = "Game version not found ".repeat(10);
+        let payload = serde_json::json!({
+            "statusCode": 404,
+            "message": message,
+        })
+        .to_string();
+
+        let mut wire_payload = StringValue::new();
+        wire_payload.value = payload;
+        let encoded = wire_payload.write_to_bytes().expect("failed to encode payload");
+
+        assert!(encoded.len() > 127);
+
+        let decoded = decode_error_payload(&encoded).expect("failed to decode payload");
+        assert_eq!(decoded.status_code(), Some(StatusCode::NOT_FOUND));
+        assert_eq!(decoded.to_string(), message);
+
+        let status = StatusCode::from(ErrorOption::from(anyhow::Error::new(decoded)));
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
 }

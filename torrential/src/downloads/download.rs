@@ -34,9 +34,9 @@ impl DownloadContext {
 pub async fn create_download_context(
     app_state: &AppState,
     game_id: String,
-    version_name: String,
+    version_id: String,
 ) -> Result<DownloadContext, ErrorOption> {
-    let version_data = fetch_version_data(app_state, game_id, version_name.clone()).await?;
+    let version_data = fetch_version_data(app_state, game_id, version_id.clone()).await?;
 
     let backend = create_backend(&version_data)?;
 

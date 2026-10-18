@@ -2,6 +2,7 @@ import { type } from "arktype";
 import { readDropValidatedBody, throwingArktype } from "~/server/arktype";
 import { aclManager } from "~/server/internal/acls";
 import { libraryManager } from "~/server/internal/library";
+import { rankPreloadCandidates } from "~/server/internal/library/preload";
 import { taskHandler, wrapTaskContext } from "~/server/internal/tasks";
 import type { Platform } from "~/prisma/client/client";
 
@@ -46,10 +47,12 @@ export default defineEventHandler(async (h3) => {
           );
           continue;
         }
-        const chosenPreload = preload.at(0);
+        const chosenPreload = rankPreloadCandidates(preload, {
+          setupMode: version.setupMode,
+        }).at(0);
         if (!chosenPreload) {
           logger.warn(
-            `failed to find preload information for: ${version.version.name} (${version.version.type}), there were no auto-discovered executables`,
+            `failed to find a suitable launch candidate for: ${version.version.name} (${version.version.type}), skipping because only installers, redistributables, or crash tooling were found`,
           );
           continue;
         }

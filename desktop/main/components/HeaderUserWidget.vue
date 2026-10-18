@@ -86,12 +86,12 @@ router.afterEach(() => {
 });
 
 const state = useAppState();
-const profilePictureUrl: string = await useObject(
-  state.value?.user?.profilePictureObjectId ?? ""
-);
-const adminUrl: string = await invoke("gen_drop_url", {
-  path: "/admin",
-});
+const profilePictureUrl = state.value?.user
+  ? await useObject(state.value.user.profilePictureObjectId)
+  : "";
+const adminUrl = state.value?.user?.admin
+  ? await invoke<string>("gen_drop_url", { path: "/admin" })
+  : "";
 
 function navigate(close: () => any, to: NavigationItem) {
   close();
