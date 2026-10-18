@@ -5,7 +5,7 @@ use database::{borrow_db_checked, borrow_db_mut_checked};
 use futures_lite::StreamExt;
 use log::{debug, warn};
 use remote::{
-    auth::{auth_initiate_logic, generate_authorization_header},
+    auth::{auth_initiate_logic, ensure_web_token, generate_authorization_header},
     cache::{cache_object, get_cached_object},
     error::RemoteAccessError,
     requests::generate_url,
@@ -19,6 +19,11 @@ use url::Url;
 use utils::{app_emit, webbrowser_open::webbrowser_open};
 
 use crate::{AppState, recieve_handshake};
+
+#[tauri::command]
+pub async fn prepare_store() -> Result<(), RemoteAccessError> {
+    ensure_web_token().await
+}
 
 #[tauri::command]
 pub async fn use_remote(

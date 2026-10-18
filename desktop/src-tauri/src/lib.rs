@@ -31,7 +31,7 @@ use ::download_manager::DownloadManagerWrapper;
 use ::games::scan::scan_install_dirs;
 use ::process::ProcessManagerWrapper;
 use ::remote::{
-    auth::{self, HandshakeRequestBody, HandshakeResponse, generate_authorization_header},
+    auth::{self, HandshakeRequestBody, HandshakeResponse},
     cache::clear_cached_object,
     error::RemoteAccessError,
     fetch_object::fetch_object_wrapper,
@@ -245,6 +245,7 @@ pub fn run() {
             gen_drop_url,
             fetch_drop_object,
             check_online,
+            prepare_store,
             // Library
             fetch_library,
             fetch_game,
@@ -575,19 +576,6 @@ async fn recieve_handshake_logic(app: &AppHandle, path: String) -> Result<(), Re
         let mut handle = borrow_db_mut_checked();
         handle.auth = Some(response_struct.into());
     }
-
-    let web_token = {
-        let header = generate_authorization_header();
-        let token = client
-            .post(base_url.join("/api/v1/client/user/webtoken")?)
-            .header("Authorization", header)
-            .send()
-            .await?;
-
-        token.text().await?
-    };
-    let mut handle = borrow_db_mut_checked();
-    handle.auth.as_mut().unwrap().web_token = Some(web_token);
 
     Ok(())
 }
