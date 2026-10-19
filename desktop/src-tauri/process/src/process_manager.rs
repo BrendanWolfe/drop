@@ -566,11 +566,34 @@ impl ProcessManager<'_> {
             command
         };
 
+        // Games are run from the directory that contains their executable, not the
+        // install root. Archives frequently nest everything inside a top-level
+        // folder (e.g. "Game Name/Game.exe" with assets beside the exe); using the
+        // install root as the working directory makes those games unable to find
+        // their own data files. This mirrors a double-click launch, where Windows
+        // sets the working directory to the executable's folder. Executables that
+        // live outside the install dir (emulators) or directly at its root keep the
+        // install dir, so existing behaviour is unchanged for them.
+        let launch_working_dir = {
+            let command_path = std::path::Path::new(&launch_parameters.0.command);
+            let install_dir = &launch_parameters.1;
+            match command_path.parent() {
+                Some(parent)
+                    if command_path.is_absolute()
+                        && parent.starts_with(install_dir)
+                        && parent != install_dir.as_path() =>
+                {
+                    parent.to_path_buf()
+                }
+                _ => install_dir.clone(),
+            }
+        };
+
         command
             .stderr(error_file)
             .stdout(log_file)
             .env_remove("RUST_LOG")
-            .current_dir(launch_parameters.1);
+            .current_dir(&launch_working_dir);
 
         process_handler.modify_command(&mut command);
 
