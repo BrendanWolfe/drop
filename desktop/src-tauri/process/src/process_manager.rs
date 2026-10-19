@@ -548,24 +548,6 @@ impl ProcessManager<'_> {
             launch_parameters.0
         );
 
-        let mut command = {
-            let mut command = Command::new(launch_parameters.0.command);
-            command.args(launch_parameters.0.args);
-            for parts in launch_parameters
-                .0
-                .env
-                .into_iter()
-                .map(|e| e.split("=").map(|v| v.to_string()).collect::<Vec<String>>())
-            {
-                if let Some(key) = parts.first()
-                    && let Some(value) = parts.get(1)
-                {
-                    command.env(key, value);
-                }
-            }
-            command
-        };
-
         // Games are run from the directory that contains their executable, not the
         // install root. Archives frequently nest everything inside a top-level
         // folder (e.g. "Game Name/Game.exe" with assets beside the exe); using the
@@ -587,6 +569,24 @@ impl ProcessManager<'_> {
                 }
                 _ => install_dir.clone(),
             }
+        };
+
+        let mut command = {
+            let mut command = Command::new(launch_parameters.0.command);
+            command.args(launch_parameters.0.args);
+            for parts in launch_parameters
+                .0
+                .env
+                .into_iter()
+                .map(|e| e.split("=").map(|v| v.to_string()).collect::<Vec<String>>())
+            {
+                if let Some(key) = parts.first()
+                    && let Some(value) = parts.get(1)
+                {
+                    command.env(key, value);
+                }
+            }
+            command
         };
 
         command
