@@ -130,9 +130,10 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ env.CERT_ID }}
           NO_STRIP: true
         with:
-          tagName: ${{ github.event.release.tag_name || inputs.tagName || 'v__VERSION__' }} # the action automatically replaces \_\_VERSION\_\_ with the app version.
-          releaseName: "Auto-release v__VERSION__"
-          releaseBody: "See the assets to download this version and install. This release was created automatically."
+          tagName: ${{ github.event.release.tag_name || inputs.tagName || format('v__VERSION__-build.{0}', github.run_number) }}
+          releaseName: "Desktop v__VERSION__ (build ${{ github.run_number }})"
+          releaseBody: "Desktop build from commit ${{ github.sha }}. Download the installer for your platform below."
+          releaseCommitish: ${{ github.sha }}
           releaseDraft: false
           prerelease: true
           args: ${{ matrix.args }}
