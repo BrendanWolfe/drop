@@ -1,6 +1,6 @@
 <template>
   <!-- Do not add scale animations to this: https://stackoverflow.com/a/35683068 -->
-  <div class="inline-flex divide-x divide-zinc-900">
+  <div class="relative inline-flex divide-x divide-zinc-900">
     <button
       type="button"
       @click="() => fetchStatusStyleData($props.status).action()"
@@ -20,7 +20,7 @@
     <Menu
       v-if="showDropdown"
       as="div"
-      class="relative inline-block text-left grow"
+      class="inline-block text-left grow"
     >
       <div class="h-full">
         <MenuButton
@@ -43,7 +43,7 @@
         leave-to-class="transform opacity-0 scale-95"
       >
         <MenuItems
-          class="absolute right-0 z-[500] mt-2 w-32 origin-top-right rounded-md bg-zinc-900 shadow-lg ring-1 ring-zinc-100/5 focus:outline-none"
+          class="absolute left-0 top-full z-[500] mt-2 w-56 origin-top-left rounded-md bg-zinc-900 shadow-lg ring-1 ring-zinc-100/5 focus:outline-none"
         >
           <div class="py-1">
             <MenuItem v-slot="{ active }">
@@ -73,6 +73,20 @@
               >
                 Options
                 <Cog6ToothIcon class="size-5" />
+              </button>
+            </MenuItem>
+            <MenuItem v-slot="{ active }">
+              <button
+                @click="() => emit('open-folder')"
+                :class="[
+                  active
+                    ? 'bg-zinc-800 text-zinc-100 outline-none'
+                    : 'text-zinc-400',
+                  'w-full px-4 py-2 text-sm inline-flex items-center justify-between gap-x-2',
+                ]"
+              >
+                Open game folder
+                <FolderOpenIcon class="size-5 shrink-0" />
               </button>
             </MenuItem>
             <MenuItem v-slot="{ active }">
@@ -114,7 +128,11 @@ import {
   type GameStatus,
 } from "~/types.js";
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
-import { Cog6ToothIcon, TrashIcon } from "@heroicons/vue/24/outline";
+import {
+  Cog6ToothIcon,
+  FolderOpenIcon,
+  TrashIcon,
+} from "@heroicons/vue/24/outline";
 import { ArrowsRightLeftIcon, ArrowUpTrayIcon } from "@heroicons/vue/24/solid";
 
 const props = defineProps<{ status: GameStatus }>();
@@ -125,6 +143,7 @@ const emit = defineEmits<{
   (e: "uninstall"): void;
   (e: "kill"): void;
   (e: "options"): void;
+  (e: "open-folder"): void;
   (e: "resume"): void;
 }>();
 

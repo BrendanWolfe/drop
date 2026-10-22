@@ -66,6 +66,7 @@
             @uninstall="() => uninstall()"
             @kill="() => kill()"
             @options="() => (configureModalOpen = true)"
+            @open-folder="() => openGameFolder()"
             @resume="() => resumeDownload()"
             :status="status"
           />
@@ -676,8 +677,8 @@ import {
   XCircleIcon,
 } from "@heroicons/vue/24/solid";
 import { invoke } from "@tauri-apps/api/core";
-import { micromark } from "micromark";
 import { InstalledType } from "~/types";
+import { renderGameDescription } from "~/utils/game-description";
 
 const route = useRoute();
 const router = useRouter();
@@ -687,7 +688,7 @@ const { game, status, version } = await useGame(id);
 
 const bannerUrl = await useObject(game.mBannerObjectId);
 
-const htmlDescription = micromark(game.mDescription);
+const htmlDescription = renderGameDescription(game.mDescription, useObject);
 
 function formatPlaytime(seconds: number): string {
   return `${(seconds / 3600).toFixed(1)}h`;
@@ -849,6 +850,26 @@ async function queue() {
 
 async function uninstall() {
   await invoke("uninstall_game", { gameId: game.id });
+}
+
+async function openGameFolder() {
+  const gameStatus = status?.value;
+  if (gameStatus?.type !== "Installed") return;
+
+  try {
+    await invoke("open_fs", { path: gameStatus.install_dir });
+  } catch (e) {
+    createModal(
+      ModalType.Notification,
+      {
+        title: "Couldn't open game folder",
+        description: `Drop failed to open the folder for "${game.mName}": ${e}`,
+        buttonText: "Close",
+      },
+      (e, c) => c(),
+    );
+    console.error(e);
+  }
 }
 
 async function kill() {
