@@ -218,11 +218,6 @@ const navigation: Ref<Array<NavigationItem>> = computed(() => [
     label: t("userHeader.links.library"),
   },
   {
-    prefix: "/community",
-    route: "/community",
-    label: t("userHeader.links.community"),
-  },
-  {
     prefix: "/news",
     route: "/news",
     label: t("userHeader.links.news"),

@@ -47,16 +47,6 @@
         </p>
 
         <div class="flex items-stretch flex-col lg:flex-row gap-3">
-          <button
-            type="button"
-            class="inline-flex items-center justify-center gap-x-2 rounded-md bg-blue-600 px-3.5 py-2.5 text-base font-semibold font-display text-white shadow-sm transition-all duration-200 hover:bg-blue-500 hover:scale-105 hover:shadow-blue-500/25 hover:shadow-lg active:scale-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-          >
-            {{ $t("library.launcherOpen") }}
-            <ArrowTopRightOnSquareIcon
-              class="-mr-0.5 h-5 w-5"
-              aria-hidden="true"
-            />
-          </button>
           <div class="relative z-50">
             <AddLibraryButton class="font-bold" :game-id="game.id" />
           </div>
@@ -121,11 +111,7 @@
 </template>
 
 <script setup lang="ts">
-import {
-  ArrowLeftIcon,
-  ArrowTopRightOnSquareIcon,
-  ArrowUpRightIcon,
-} from "@heroicons/vue/20/solid";
+import { ArrowLeftIcon, ArrowUpRightIcon } from "@heroicons/vue/20/solid";
 import { micromark } from "micromark";
 
 const { t } = useI18n();

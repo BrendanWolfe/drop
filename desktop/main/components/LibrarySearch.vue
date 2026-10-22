@@ -288,7 +288,7 @@ await new Promise<void>((r) => {
     if (!hasResolved) r();
     hasResolved = true;
   };
-  calculateGames(true).then(resolveFunc);
+  calculateGames(true, true).then(resolveFunc);
   setTimeout(resolveFunc, 300);
 });
 
@@ -338,7 +338,7 @@ const filteredNavigation = computed(() => {
     .filter((e) => e.items.length > 0);
 });
 
-listen("update_library", async (event) => {
+const unlistenLibrary = await listen("update_library", async (event) => {
   console.log("Updating library");
   let oldNavigation = currentNavigation.value;
   await calculateGames(false, true);
@@ -346,6 +346,7 @@ listen("update_library", async (event) => {
     router.push("/library");
   }
 });
+onUnmounted(unlistenLibrary);
 </script>
 
 <style scoped>

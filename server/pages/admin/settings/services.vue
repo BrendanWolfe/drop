@@ -35,11 +35,7 @@
         </div>
         <div class="mt-8">
           <h3 class="text-base font-semibold text-white">
-            <a :href="service.href" class="focus:outline-hidden">
-              <!-- Extend touch target to entire panel -->
-              <span class="absolute inset-0" aria-hidden="true"></span>
-              {{ serviceMetadata[service.name].title }}
-            </a>
+            {{ serviceMetadata[service.name].title }}
           </h3>
           <p class="mt-2 text-sm text-zinc-400">
             {{ serviceMetadata[service.name].description }}

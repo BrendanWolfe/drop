@@ -30,14 +30,6 @@
         <ol class="inline-flex gap-3">
           <HeaderProtonSupportWidget />
           <HeaderQueueWidget :object="currentQueueObject" />
-          <li v-for="(item, itemIdx) in quickActions">
-            <HeaderWidget
-              @click="item.action"
-              :notifications="item.notifications"
-            >
-              <component class="h-5" :is="item.icon" />
-            </HeaderWidget>
-          </li>
           <OfflineHeaderWidget v-if="state?.status === AppStatus.Offline" />
           <HeaderUserWidget />
         </ol>
@@ -48,9 +40,7 @@
 </template>
 
 <script setup lang="ts">
-import { BellIcon, UserGroupIcon } from "@heroicons/vue/16/solid";
-import { AppStatus, type NavigationItem, type QuickActionNav } from "../types";
-import HeaderWidget from "./HeaderWidget.vue";
+import { AppStatus, type NavigationItem } from "../types";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const window = getCurrentWindow();
@@ -67,30 +57,9 @@ const navigation: Array<NavigationItem> = [
     route: "/library",
     label: "Library",
   },
-  {
-    prefix: "/community",
-    route: "/community",
-    label: "Community",
-  },
-  {
-    prefix: "/news",
-    route: "/news",
-    label: "News",
-  },
 ];
 
 const { currentNavigation } = useCurrentNavigationIndex(navigation);
-
-const quickActions: Array<QuickActionNav> = [
-  {
-    icon: UserGroupIcon,
-    action: async () => {},
-  },
-  {
-    icon: BellIcon,
-    action: async () => {},
-  },
-];
 
 const queue = useQueueState();
 const currentQueueObject = computed(() => queue.value.queue.at(0));

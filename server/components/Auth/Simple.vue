@@ -53,14 +53,6 @@
           >{{ $t("auth.signin.rememberMe") }}</label
         >
       </div>
-
-      <div class="text-sm leading-6">
-        <NuxtLink
-          to="#"
-          class="font-semibold text-blue-600 hover:text-blue-500"
-          >{{ $t("auth.signin.forgot") }}</NuxtLink
-        >
-      </div>
     </div>
 
     <div>

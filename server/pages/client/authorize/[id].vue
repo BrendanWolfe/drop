@@ -123,22 +123,6 @@
               class="mt-4 flex flex-auto flex-col text-base leading-7 text-zinc-400"
             >
               <p class="flex-auto">{{ feature.description }}</p>
-              <p class="mt-1">
-                <NuxtLink
-                  :href="feature.href"
-                  class="text-sm font-semibold leading-6 text-blue-600"
-                >
-                  <i18n-t
-                    keypath="auth.callback.learn"
-                    tag="span"
-                    scope="global"
-                  >
-                    <template #arrow>
-                      <span aria-hidden="true">{{ $t("chars.arrow") }}</span>
-                    </template>
-                  </i18n-t>
-                </NuxtLink>
-              </p>
             </dd>
           </div>
         </dl>

@@ -41,22 +41,6 @@
         <nav
           class="mx-auto flex w-full max-w-7xl items-center gap-x-4 px-6 text-sm leading-7 text-zinc-400 lg:px-8"
         >
-          <a href="#">Documentation</a>
-          <svg
-            viewBox="0 0 2 2"
-            aria-hidden="true"
-            class="h-0.5 w-0.5 fill-zinc-700"
-          >
-            <circle cx="1" cy="1" r="1" />
-          </svg>
-          <a href="#">Troubleshooting</a>
-          <svg
-            viewBox="0 0 2 2"
-            aria-hidden="true"
-            class="h-0.5 w-0.5 fill-zinc-700"
-          >
-            <circle cx="1" cy="1" r="1" />
-          </svg>
           <NuxtLink to="/setup/server">Switch instance</NuxtLink>
         </nav>
       </div>

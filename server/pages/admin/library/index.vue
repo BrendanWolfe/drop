@@ -117,11 +117,6 @@
               }}
             </DisclosureButton>
           </div>
-          <div class="pl-6">
-            <button type="button" class="text-zinc-400">
-              {{ $t("library.admin.nav.clearAllFilters") }}
-            </button>
-          </div>
         </div>
       </div>
       <DisclosurePanel

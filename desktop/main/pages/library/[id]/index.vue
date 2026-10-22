@@ -679,6 +679,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { InstalledType } from "~/types";
 import { renderGameDescription } from "~/utils/game-description";
+import { canStartStoreDownload } from "~/utils/store-download";
 
 const route = useRoute();
 const router = useRouter();
@@ -724,12 +725,35 @@ const installVersionIndex = ref(-1);
 const installDir = ref(0);
 const installDepsDisabled = ref<{ [key: string]: boolean }>({});
 
+onMounted(async () => {
+  if (route.query.download !== "1") return;
+
+  const { download: _download, ...query } = route.query;
+  await router.replace({ path: route.path, query });
+  if (status?.value.type !== "Remote") return;
+
+  await installFlow();
+  if (!installFlowOpen.value) return;
+  if (
+    canStartStoreDownload(status?.value, versionOptions.value, installDirs.value)
+  ) {
+    installVersionIndex.value = -1;
+    installDir.value = 0;
+    await install();
+  }
+});
+
 async function install() {
   try {
-    if (!versionOptions.value) throw new Error("Versions have not been loaded");
+    if (installLoading.value) return;
+    if (!versionOptions.value?.length)
+      throw new Error("No compatible versions are available");
+    if (!installDirs.value?.[installDir.value])
+      throw new Error("Select an install folder");
     installLoading.value = true;
     const versionOption =
       versionOptions.value[Math.max(installVersionIndex.value, 0)];
+    if (!versionOption) throw new Error("Select a version to install");
     const isLatest = installVersionIndex.value == -1;
 
     const games = [

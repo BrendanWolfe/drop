@@ -97,7 +97,7 @@ const navigation = computed<NavigationItem[]>(() =>
       : undefined,
     {
       label: $t("userHeader.profile.settings"),
-      route: "/account",
+      route: "/account/security",
       prefix: "",
     },
     {

@@ -9,7 +9,7 @@ on:
     - cron: "0 2 * * *" # run at 2 AM UTC
 
 env:
-  REGISTRY_IMAGE: ghcr.io/drop-oss/drop
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   build:
@@ -38,6 +38,7 @@ jobs:
         run: |
           platform=${{ matrix.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+          echo "REGISTRY_IMAGE=${REGISTRY_IMAGE,,}" >> $GITHUB_ENV
 
       - name: Docker meta
         id: meta
@@ -61,7 +62,7 @@ jobs:
       - name: Determine final version
         id: get_final_ver
         run: |
-          BASE_VER=v$(jq -r '.version' package.json)
+          BASE_VER=v$(jq -r '.version' server/package.json)
           TODAY=$(date +'%Y.%m.%d')
 
           echo "Today will be: $TODAY"
@@ -112,6 +113,9 @@ jobs:
       packages: write
       contents: read
     steps:
+      - name: Prepare registry image
+        run: echo "REGISTRY_IMAGE=${REGISTRY_IMAGE,,}" >> $GITHUB_ENV
+
       - name: Download digests
         uses: actions/download-artifact@v8
         with:
@@ -133,7 +137,7 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: |
-            ghcr.io/drop-OSS/drop
+            ${{ env.REGISTRY_IMAGE }}
           tags: |
             type=schedule,pattern=nightly
             type=schedule,pattern=nightly.${{ steps.get_final_ver.outputs.today }}

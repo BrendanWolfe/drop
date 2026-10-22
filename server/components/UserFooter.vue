@@ -28,65 +28,33 @@
 
         <!-- Foot links -->
         <div class="mt-16 grid grid-cols-2 gap-8 xl:col-span-2 xl:mt-0">
-          <div class="md:grid md:grid-cols-2 md:gap-8">
-            <div>
-              <h3 class="text-sm font-semibold leading-6 text-white">
-                {{ $t("footer.games") }}
-              </h3>
-              <ul role="list" class="mt-6 space-y-4">
-                <li v-for="item in navigation.games" :key="item.name">
-                  <NuxtLink
-                    :to="item.href"
-                    class="text-sm leading-6 text-zinc-300 hover:text-white"
-                    >{{ item.name }}</NuxtLink
-                  >
-                </li>
-              </ul>
-            </div>
-            <div class="mt-10 md:mt-0">
-              <h3 class="text-sm font-semibold leading-6 text-white">
-                {{ $t("userHeader.links.community") }}
-              </h3>
-              <ul role="list" class="mt-6 space-y-4">
-                <li v-for="item in navigation.community" :key="item.name">
-                  <NuxtLink
-                    :to="item.href"
-                    class="text-sm leading-6 text-zinc-300 hover:text-white"
-                    >{{ item.name }}</NuxtLink
-                  >
-                </li>
-              </ul>
-            </div>
+          <div>
+            <h3 class="text-sm font-semibold leading-6 text-white">
+              {{ $t("footer.documentation") }}
+            </h3>
+            <ul role="list" class="mt-6 space-y-4">
+              <li v-for="item in navigation.documentation" :key="item.name">
+                <NuxtLink
+                  :to="item.href"
+                  class="text-sm leading-6 text-zinc-300 hover:text-white"
+                  >{{ item.name }}</NuxtLink
+                >
+              </li>
+            </ul>
           </div>
-          <div class="md:grid md:grid-cols-2 md:gap-8">
-            <div>
-              <h3 class="text-sm font-semibold leading-6 text-white">
-                {{ $t("footer.documentation") }}
-              </h3>
-              <ul role="list" class="mt-6 space-y-4">
-                <li v-for="item in navigation.documentation" :key="item.name">
-                  <NuxtLink
-                    :to="item.href"
-                    class="text-sm leading-6 text-zinc-300 hover:text-white"
-                    >{{ item.name }}</NuxtLink
-                  >
-                </li>
-              </ul>
-            </div>
-            <div class="mt-10 md:mt-0">
-              <h3 class="text-sm font-semibold leading-6 text-white">
-                {{ $t("footer.about") }}
-              </h3>
-              <ul role="list" class="mt-6 space-y-4">
-                <li v-for="item in navigation.about" :key="item.name">
-                  <NuxtLink
-                    :to="item.href"
-                    class="text-sm leading-6 text-zinc-300 hover:text-white"
-                    >{{ item.name }}</NuxtLink
-                  >
-                </li>
-              </ul>
-            </div>
+          <div>
+            <h3 class="text-sm font-semibold leading-6 text-white">
+              {{ $t("footer.about") }}
+            </h3>
+            <ul role="list" class="mt-6 space-y-4">
+              <li v-for="item in navigation.about" :key="item.name">
+                <NuxtLink
+                  :to="item.href"
+                  class="text-sm leading-6 text-zinc-300 hover:text-white"
+                  >{{ item.name }}</NuxtLink
+                >
+              </li>
+            </ul>
           </div>
         </div>
 
@@ -118,17 +86,6 @@ const { t } = useI18n();
 const versionInfo = await $dropFetch("/api/v1");
 
 const navigation = computed(() => ({
-  games: [
-    { name: t("store.recentlyAdded"), href: "#" },
-    { name: t("store.recentlyReleased"), href: "#" },
-    { name: t("footer.topSellers"), href: "#" },
-    { name: t("footer.findGame"), href: "#" },
-  ],
-  community: [
-    { name: t("common.friends"), href: "#" },
-    { name: t("common.groups"), href: "#" },
-    { name: t("common.servers"), href: "#" },
-  ],
   documentation: [
     // TODO: public API docs
     // { name: t("footer.api"), href: "https://api.droposs.org/" },

@@ -31,6 +31,7 @@
   </div>
   <iframe
     v-else
+    ref="storeFrame"
     :src="convertedStoreUrl"
     title="Drop Store"
     class="grow w-full h-full"
@@ -39,8 +40,13 @@
 <script setup lang="ts">
 import { ArrowPathIcon } from "@heroicons/vue/24/outline";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import type { Game } from "~/types";
 
 const route = useRoute();
+const router = useRouter();
+const storeFrame = ref<HTMLIFrameElement>();
+let handlingDownload = false;
+let libraryUpdates = Promise.resolve();
 const loading = ref(true);
 const error = ref<string | null>(null);
 
@@ -74,5 +80,51 @@ async function prepareStore() {
   }
 }
 
-onMounted(prepareStore);
+function onStoreMessage(event: MessageEvent) {
+  const change = getStoreLibraryChange(event, storeFrame.value?.contentWindow);
+  if (!change) return;
+
+  const startDownload = change.download && !handlingDownload;
+  if (startDownload) handlingDownload = true;
+
+  // Serialize updates so a slower add refresh cannot overwrite a later removal.
+  libraryUpdates = libraryUpdates.then(async () => {
+    try {
+      const result = await invoke<{ library: Game[] }>("fetch_library", {
+        hardRefresh: true,
+      });
+      if (startDownload) {
+        if (!result.library.some((game) => game.id === change.gameId)) {
+          throw new Error("The game is no longer in your library.");
+        }
+        await router.push({
+          path: `/library/${change.gameId}`,
+          query: { download: "1" },
+        });
+      }
+    } catch (cause) {
+      createModal(
+        ModalType.Notification,
+        {
+          title: startDownload
+            ? "Couldn't start download"
+            : "Couldn't refresh library",
+          description: startDownload
+            ? `The game was added to your library, but Drop couldn't start its download. Open the Library tab to retry: ${cause}`
+            : `Your library changed, but Drop couldn't refresh its list: ${cause}`,
+          buttonText: "Close",
+        },
+        (_event, close) => close(),
+      );
+    } finally {
+      if (startDownload) handlingDownload = false;
+    }
+  });
+}
+
+onMounted(() => {
+  window.addEventListener("message", onStoreMessage);
+  prepareStore();
+});
+onBeforeUnmount(() => window.removeEventListener("message", onStoreMessage));
 </script>

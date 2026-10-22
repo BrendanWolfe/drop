@@ -47,14 +47,6 @@
           <nav
             class="mx-auto flex w-full max-w-7xl items-center gap-x-4 px-6 text-sm leading-7 text-zinc-400 lg:px-8"
           >
-            <NuxtLink href="/docs">Documentation</NuxtLink>
-            <svg
-              viewBox="0 0 2 2"
-              aria-hidden="true"
-              class="h-0.5 w-0.5 fill-zinc-600"
-            >
-              <circle cx="1" cy="1" r="1" />
-            </svg>
             <a href="https://discord.gg/NHx46XKJWA" target="_blank"
               >Support Discord</a
             >

@@ -41,10 +41,8 @@
 <script setup lang="ts">
 import {
   BellIcon,
-  HomeIcon,
   LockClosedIcon,
   DevicePhoneMobileIcon,
-  WrenchScrewdriverIcon,
   CodeBracketIcon,
 } from "@heroicons/vue/24/outline";
 import { UserIcon } from "@heroicons/vue/24/solid";
@@ -56,12 +54,6 @@ const { t } = useI18n();
 const navigation: Ref<
   (NavigationItem & { icon: Component; count?: number })[]
 > = computed(() => [
-  {
-    label: t("account.home.title"),
-    route: "/account",
-    icon: HomeIcon,
-    prefix: "/account",
-  },
   {
     label: t("account.security.title"),
     route: "/account/security",
@@ -86,12 +78,6 @@ const navigation: Ref<
     prefix: "/account/notifications",
     icon: BellIcon,
     count: notifications.value.length,
-  },
-  {
-    label: t("account.settings"),
-    route: "/account/settings",
-    prefix: "/account/settings",
-    icon: WrenchScrewdriverIcon,
   },
 ]);
 

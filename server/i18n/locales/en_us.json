@@ -605,6 +605,7 @@
       "subheader": "Add a new collection to organize your games",
       "title": "Collection"
     },
+    "downloadAfterAdding": "Start download after adding",
     "gameCount": "{0} games | {0} game | {0} games",
     "inLib": "In Library",
     "launcherOpen": "Open in Launcher",

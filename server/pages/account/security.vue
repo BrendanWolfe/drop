@@ -66,26 +66,21 @@
           <div class="mt-8 max-w-sm">
             <h3 class="text-base font-semibold text-white">
               <NuxtLink
-                :href="mfa.mecs.TOTP?.enabled ? '' : '/mfa/setup/totp'"
+                v-if="!mfa.mecs.TOTP?.enabled"
+                href="/mfa/setup/totp"
                 class="focus:outline-hidden"
               >
                 <!-- Extend touch target to entire panel -->
-                <span
-                  v-if="!mfa.mecs.TOTP?.enabled"
-                  class="absolute inset-0"
-                  aria-hidden="true"
-                ></span>
+                <span class="absolute inset-0" aria-hidden="true"></span>
                 {{ $t("account.security.2fa.totp.title") }}
               </NuxtLink>
+              <template v-else>
+                {{ $t("account.security.2fa.totp.title") }}
+              </template>
             </h3>
             <p class="mt-2 text-sm text-gray-400">
               {{ $t("account.security.2fa.totp.description") }}
             </p>
-            <div v-if="mfa.mecs.TOTP?.enabled" class="mt-3">
-              <LoadingButton :loading="false">{{
-                $t("account.security.2fa.totp.disableButton")
-              }}</LoadingButton>
-            </div>
           </div>
           <span
             class="pointer-events-none absolute top-6 right-6"

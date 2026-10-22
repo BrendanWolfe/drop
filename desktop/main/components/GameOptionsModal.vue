@@ -76,7 +76,6 @@
 import type { Component } from "vue";
 import {
   RocketLaunchIcon,
-  ServerIcon,
   TrashIcon,
   XCircleIcon,
 } from "@heroicons/vue/20/solid";
@@ -113,11 +112,6 @@ const tabs: Array<{ name: string; icon: Component; page: Component }> = [
     name: "Updates",
     icon: ArrowPathIcon,
     page: Updates,
-  },
-  {
-    name: "Storage",
-    icon: ServerIcon,
-    page: h("div"),
   },
 ];
 const currentTabIndex = ref(0);
