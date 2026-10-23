@@ -29,6 +29,6 @@ pub trait Downloadable: Send + Sync + Debug {
     fn metadata(&self) -> DownloadableMetadata;
     fn on_queued(&self, app_handle: &AppHandle);
     fn on_error(&self, app_handle: &AppHandle, error: &ApplicationDownloadError);
-    async fn on_complete(&self, app_handle: &AppHandle);
+    async fn on_complete(&self, app_handle: &AppHandle) -> Result<(), ApplicationDownloadError>;
     fn on_cancelled(&self, app_handle: &AppHandle);
 }

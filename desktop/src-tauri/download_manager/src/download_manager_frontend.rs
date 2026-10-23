@@ -5,7 +5,7 @@ use std::{
 };
 
 use database::DownloadableMetadata;
-use log::{debug, info};
+use log::{debug, info, warn};
 use serde::Serialize;
 use tauri::async_runtime::JoinHandle;
 use tokio::sync::mpsc::Sender;
@@ -21,8 +21,10 @@ use super::{
 
 #[derive(Debug)]
 pub enum DownloadManagerSignal {
-    /// Resumes (or starts) the `DownloadManager`
+    /// Starts the next queued download unless the user has paused the queue.
     Go,
+    /// Explicitly resumes a user-paused queue.
+    Resume,
     /// Pauses the `DownloadManager`
     Stop,
     /// Called when a `DownloadAgent` has fully completed a download.
@@ -36,14 +38,22 @@ pub enum DownloadManagerSignal {
     Finish,
     /// Stops, removes, and tells a download to cleanup
     Cancel(DownloadableMetadata),
+    /// Moves the item at `current_index` to `new_index`.
+    ///
+    /// The manager performs the edit so it can stop the active worker first
+    /// when the queue front is involved.
+    Rearrange {
+        current_index: usize,
+        new_index: usize,
+    },
     /// Any error which occurs in the agent
-    Error(ApplicationDownloadError),
+    Error(DownloadableMetadata, ApplicationDownloadError),
     /// Pushes UI update
     UpdateUIQueue,
     UpdateUIDownloadStats(usize, usize), //kb/s and seconds
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DownloadManagerStatus {
     Downloading,
     Paused,
@@ -131,14 +141,15 @@ impl DownloadManager {
         Some(progress_object.get_progress())
     }
     pub async fn rearrange_string(&self, meta: &DownloadableMetadata, new_index: usize) {
-        let mut queue = self.edit();
-        let current_index =
-            get_index_from_id(&mut queue, meta).expect("Failed to get meta index from id");
-        let to_move = queue
-            .remove(current_index)
-            .expect("Failed to remove meta at index from queue");
-        queue.insert(new_index, to_move);
-        send!(self.command_sender, DownloadManagerSignal::UpdateUIQueue);
+        let current_index = self
+            .read_queue()
+            .iter()
+            .position(|download_agent| download_agent == meta);
+
+        match current_index {
+            Some(current_index) => self.rearrange(current_index, new_index).await,
+            None => warn!("cannot rearrange missing download {meta:?}"),
+        }
     }
     pub async fn cancel(&self, meta: DownloadableMetadata) {
         send!(self.command_sender, DownloadManagerSignal::Cancel(meta));
@@ -148,30 +159,20 @@ impl DownloadManager {
             return;
         }
 
-        let needs_pause = current_index == 0 || new_index == 0;
-        if needs_pause {
-            send!(self.command_sender, DownloadManagerSignal::Stop);
-        }
-
         debug!("moving download at index {current_index} to index {new_index}");
-
-        {
-            let mut queue = self.edit();
-            let to_move = queue.remove(current_index).expect("Failed to get");
-            queue.insert(new_index, to_move);
-        }
-
-        if needs_pause {
-            send!(self.command_sender, DownloadManagerSignal::Go);
-        }
-        send!(self.command_sender, DownloadManagerSignal::UpdateUIQueue);
-        send!(self.command_sender, DownloadManagerSignal::Go);
+        send!(
+            self.command_sender,
+            DownloadManagerSignal::Rearrange {
+                current_index,
+                new_index,
+            }
+        );
     }
     pub async fn pause_downloads(&self) {
         send!(self.command_sender, DownloadManagerSignal::Stop);
     }
     pub async fn resume_downloads(&self) {
-        send!(self.command_sender, DownloadManagerSignal::Go);
+        send!(self.command_sender, DownloadManagerSignal::Resume);
     }
     pub async fn ensure_terminated(&self) -> Result<(), tauri::Error> {
         send!(self.command_sender, DownloadManagerSignal::Finish);
@@ -184,15 +185,4 @@ impl DownloadManager {
     pub fn clone_depot_manager(&self) -> Arc<DepotManager> {
         self.depot_manager.clone()
     }
-}
-
-/// Takes in the locked value from .`edit()` and attempts to
-/// get the index of whatever id is passed in
-fn get_index_from_id(
-    queue: &mut MutexGuard<'_, VecDeque<DownloadableMetadata>>,
-    meta: &DownloadableMetadata,
-) -> Option<usize> {
-    queue
-        .iter()
-        .position(|download_agent| download_agent == meta)
 }

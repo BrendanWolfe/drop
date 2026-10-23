@@ -72,6 +72,45 @@
           download faster but use more system resources. Default is 4.
         </p>
       </div>
+      <div class="mt-6 max-w-xl">
+        <label
+          for="max-download-speed"
+          class="block text-sm font-medium text-zinc-100"
+        >
+          Download Speed Limit
+        </label>
+        <div class="relative mt-2">
+          <input
+            type="number"
+            name="max-download-speed"
+            id="max-download-speed"
+            min="0"
+            step="any"
+            v-model="maxDownloadSpeedMegabytes"
+            @input="speedLimitError = undefined"
+            :aria-invalid="speedLimitError !== undefined"
+            aria-describedby="max-download-speed-help"
+            class="block w-full rounded-md border-0 py-1.5 pr-16 text-zinc-100 shadow-sm ring-1 ring-inset ring-zinc-700 bg-zinc-800 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm sm:leading-6"
+          />
+          <span
+            class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-zinc-400"
+          >
+            MB/s
+          </span>
+        </div>
+        <p id="max-download-speed-help" class="mt-2 text-sm text-zinc-400">
+          Maximum download speed in megabytes per second (1 MB/s = 1,000,000
+          bytes per second). Use 0 for unlimited. This applies to active and
+          future downloads.
+        </p>
+        <p
+          v-if="speedLimitError"
+          class="mt-2 text-sm text-red-400"
+          role="alert"
+        >
+          {{ speedLimitError }}
+        </p>
+      </div>
       <div class="mt-10 space-y-8">
         <div class="flex flex-row items-center justify-between">
           <div>
@@ -103,6 +142,23 @@
         ]">
           {{ saveState.success ? 'Saved' : 'Save Changes' }}
         </button>
+        <div
+          v-if="saveError"
+          role="alert"
+          class="mt-3 rounded-md bg-red-500/15 p-4 outline outline-red-500/25"
+        >
+          <div class="flex">
+            <div class="shrink-0">
+              <XCircleIcon class="size-5 text-red-400" aria-hidden="true" />
+            </div>
+            <div class="ml-3">
+              <h3 class="text-sm font-medium text-red-200">
+                Couldn't save download settings
+              </h3>
+              <p class="mt-1 text-sm text-red-200/80">{{ saveError }}</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -187,6 +243,10 @@ import { FolderIcon, TrashIcon, XCircleIcon } from "@heroicons/vue/16/solid";
 import { invoke } from "@tauri-apps/api/core";
 import { Switch } from '@headlessui/vue'
 import { type Settings } from "~/types";
+import {
+  formatDownloadSpeedMegabytes,
+  parseDownloadSpeedMegabytes,
+} from "~/utils/download-settings";
 
 const open = ref(false);
 const currentDirectory = ref<string | undefined>(undefined);
@@ -197,6 +257,11 @@ const dirs = ref<Array<string>>([]);
 
 const settings = await invoke<Settings>("fetch_settings");
 const downloadThreads = ref(settings?.maxDownloadThreads ?? 4);
+const maxDownloadSpeedMegabytes = ref<string | number>(
+  formatDownloadSpeedMegabytes(settings?.maxDownloadSpeed ?? 0),
+);
+const speedLimitError = ref<string | undefined>(undefined);
+const saveError = ref<string | undefined>(undefined);
 const forceOffline = ref(settings?.forceOffline ?? false);
 
 const saveState = reactive({
@@ -261,10 +326,24 @@ async function deleteDirectory(index: number) {
 }
 
 async function saveSettings() {
+  saveError.value = undefined;
+  const speedLimit = parseDownloadSpeedMegabytes(
+    maxDownloadSpeedMegabytes.value,
+  );
+  if (!speedLimit.valid) {
+    speedLimitError.value = speedLimit.error;
+    return;
+  }
+  speedLimitError.value = undefined;
+
   try {
     saveState.loading = true;
     await invoke("update_settings", {
-      newSettings: { maxDownloadThreads: downloadThreads.value, forceOffline: forceOffline.value },
+      newSettings: {
+        maxDownloadThreads: downloadThreads.value,
+        maxDownloadSpeed: speedLimit.bytesPerSecond,
+        forceOffline: forceOffline.value,
+      },
     });
 
     // Show success state
@@ -277,6 +356,7 @@ async function saveSettings() {
 
   } catch (error) {
     console.error('Failed to save settings:', error);
+    saveError.value = String(error);
   } finally {
     saveState.loading = false;
   }

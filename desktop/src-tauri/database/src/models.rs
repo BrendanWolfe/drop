@@ -157,6 +157,9 @@ pub mod data {
         pub struct Settings {
             pub autostart: bool,
             pub max_download_threads: usize,
+            /// Aggregate download speed limit in bytes per second. 0 means unlimited.
+            #[serde(default)]
+            pub max_download_speed: u64,
             pub force_offline: bool, // ... other settings ...
         }
         impl Default for Settings {
@@ -164,6 +167,7 @@ pub mod data {
                 Self {
                     autostart: false,
                     max_download_threads: 4,
+                    max_download_speed: 0,
                     force_offline: false,
                 }
             }
@@ -314,6 +318,44 @@ pub mod data {
                 client_id,
                 web_token,
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::Settings;
+
+        #[test]
+        fn settings_default_speed_is_unlimited() {
+            assert_eq!(Settings::default().max_download_speed, 0);
+        }
+
+        #[test]
+        fn settings_without_speed_deserialize_as_unlimited() {
+            let settings: Settings =
+                ron::from_str("(autostart:false,maxDownloadThreads:4,forceOffline:false)")
+                    .expect("old settings should still deserialize");
+
+            assert!(!settings.autostart);
+            assert_eq!(settings.max_download_threads, 4);
+            assert!(!settings.force_offline);
+            assert_eq!(settings.max_download_speed, 0);
+        }
+
+        #[test]
+        fn settings_speed_uses_camel_case_and_round_trips() {
+            let settings: Settings = ron::from_str(
+                "(autostart:true,maxDownloadThreads:8,maxDownloadSpeed:1048576,forceOffline:true)",
+            )
+            .expect("settings with speed should deserialize");
+
+            assert_eq!(settings.max_download_speed, 1_048_576);
+
+            let encoded = ron::to_string(&settings).expect("settings should serialize");
+            assert!(encoded.contains("maxDownloadSpeed"));
+
+            let round_trip: Settings = ron::from_str(&encoded).expect("settings should round trip");
+            assert_eq!(round_trip.max_download_speed, 1_048_576);
         }
     }
 }

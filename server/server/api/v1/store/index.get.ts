@@ -3,6 +3,7 @@ import type { Prisma } from "~/prisma/client/client";
 import { GameType } from "~/prisma/client/enums";
 import aclManager from "~/server/internal/acls";
 import prisma from "~/server/internal/db/database";
+import gameSizeManager from "~/server/internal/gamesize";
 import { parsePlatform } from "~/server/internal/utils/parseplatform";
 import { getAgeRestrictionFilter } from "~/server/internal/utils/ageRestrictions";
 
@@ -20,7 +21,7 @@ const StoreRead = type({
   company: "string?",
   companyActions: "string = 'published,developed'",
 
-  sort: "'default' | 'newest' | 'recent' | 'name' = 'default'",
+  sort: "'default' | 'newest' | 'recent' | 'name' | 'size' = 'default'",
   order: "'asc' | 'desc' = 'desc'",
 });
 
@@ -127,6 +128,47 @@ export default defineEventHandler(async (h3) => {
     ...ageFilter,
     type: GameType.Game,
   };
+
+  if (options.sort === "size") {
+    const games = await prisma.game.findMany({
+      where: finalFilter,
+      select: {
+        id: true,
+        versions: {
+          orderBy: { versionIndex: "desc" },
+          take: 1,
+          select: { versionId: true },
+        },
+      },
+    });
+    // Size is computed from manifests, so sort all matches before paginating.
+    const sizedGames = await Promise.all(
+      games.map(async (game) => {
+        const version = game.versions[0];
+        const size = version
+          ? await gameSizeManager.getVersionSize(version.versionId)
+          : null;
+        return { id: game.id, size: size?.installSize ?? null };
+      }),
+    );
+    sizedGames.sort((a, b) => {
+      if (a.size === null && b.size !== null) return 1;
+      if (b.size === null && a.size !== null) return -1;
+      const difference = (a.size ?? 0) - (b.size ?? 0);
+      return (
+        (options.order === "asc" ? difference : -difference) ||
+        a.id.localeCompare(b.id)
+      );
+    });
+    const ids = sizedGames
+      .slice(options.skip, options.skip + Math.min(options.take, 50))
+      .map((game) => game.id);
+    const results = await prisma.game.findMany({
+      where: { ...finalFilter, id: { in: ids } },
+    });
+    results.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+    return { results, count: games.length };
+  }
 
   const sort: Prisma.GameOrderByWithRelationInput = {};
   switch (options.sort) {

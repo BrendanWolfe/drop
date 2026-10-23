@@ -8,7 +8,7 @@ use database::{
     Settings, borrow_db_checked, borrow_db_mut_checked, db::DATA_ROOT_DIR, debug::SystemData,
 };
 use download_manager::error::DownloadManagerError;
-use games::scan::scan_install_dirs;
+use games::{downloads::set_download_speed_limit, scan::scan_install_dirs};
 use log::error;
 use serde_json::Value;
 
@@ -82,7 +82,11 @@ pub fn update_settings(new_settings: Value) {
             return;
         }
     };
+    let speed_limit = new_settings.max_download_speed;
     db_lock.settings = new_settings;
+    drop(db_lock);
+
+    set_download_speed_limit(speed_limit);
 }
 #[tauri::command]
 pub fn fetch_settings() -> Settings {

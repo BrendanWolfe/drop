@@ -61,6 +61,8 @@ jobs:
 
       - name: Determine final version
         id: get_final_ver
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           BASE_VER=v$(jq -r '.version' server/package.json)
           TODAY=$(date +'%Y.%m.%d')
@@ -69,7 +71,7 @@ jobs:
           echo "today=$TODAY" >> $GITHUB_OUTPUT
 
           if [[ "${{ github.event_name }}" == "release" ]]; then
-            FINAL_VER="$BASE_VER"
+            FINAL_VER="$RELEASE_TAG"
           else
             FINAL_VER="${BASE_VER}-nightly.$TODAY"
           fi

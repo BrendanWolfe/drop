@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tauri::AppHandle;
 use tokio::sync::mpsc::Sender;
-use utils::{app_emit, lock, send};
+use utils::{app_emit, lock};
 
 use crate::downloads::utils::get_disk_available;
 use crate::library::{Game, on_game_complete, push_game_update, set_partially_installed};
@@ -58,7 +58,6 @@ pub struct GameDownloadAgent {
     pub download_progress: Arc<ProgressObject>,
     pub disk_progress: Arc<ProgressObject>,
     depot_manager: Arc<DepotManager>,
-    sender: Sender<DownloadManagerSignal>,
     pub dropdata: DropData,
     status: Mutex<DownloadStatus>,
 }
@@ -115,7 +114,6 @@ impl GameDownloadAgent {
                 sender.clone(),
                 ProgressType::Disk,
             )),
-            sender,
             dropdata: stored_manifest,
             status: Mutex::new(DownloadStatus::Queued),
             depot_manager,
@@ -169,8 +167,6 @@ impl GameDownloadAgent {
         if !self.check_manifest_exists() {
             return Err(ApplicationDownloadError::NotInitialized);
         }
-
-        self.control_flag.set(DownloadThreadControlFlag::Go);
 
         Ok(())
     }
@@ -274,6 +270,7 @@ impl GameDownloadAgent {
     }
 
     async fn run(&self) -> Result<bool, ApplicationDownloadError> {
+        super::initialize_download_speed_limit_from_db();
         self.depot_manager.sync_depots().await?;
         info!("synced depots");
         self.setup_progress();
@@ -308,7 +305,10 @@ impl GameDownloadAgent {
         let current_file_tree = self.scan_filetree(base_path)?;
 
         for file in current_file_tree {
-            let filename = file.strip_prefix(base_path)?.to_string_lossy().replace('\\', "/");
+            let filename = file
+                .strip_prefix(base_path)?
+                .to_string_lossy()
+                .replace('\\', "/");
             let needed = file_list.contains_key(&filename) || filename == ".dropdata";
             if !needed {
                 debug!("deleted {}", file.display());
@@ -382,6 +382,7 @@ impl GameDownloadAgent {
                             &chunk_data,
                             file_list,
                             base_path,
+                            max_download_threads,
                             &self.control_flag,
                             &download_progress_handle,
                             &disk_progress_handle,
@@ -599,24 +600,18 @@ impl Downloadable for GameDownloadAgent {
         );
     }
 
-    async fn on_complete(&self, app_handle: &tauri::AppHandle) {
-        match on_game_complete(
+    async fn on_complete(
+        &self,
+        app_handle: &tauri::AppHandle,
+    ) -> Result<(), ApplicationDownloadError> {
+        on_game_complete(
             &self.metadata(),
             self.configuration.clone(),
             self.dropdata.base_path.to_string_lossy().to_string(),
             app_handle,
         )
         .await
-        {
-            Ok(_) => {}
-            Err(e) => {
-                error!("could not mark game as complete: {e}");
-                send!(
-                    self.sender,
-                    DownloadManagerSignal::Error(ApplicationDownloadError::DownloadError(e))
-                );
-            }
-        }
+        .map_err(ApplicationDownloadError::DownloadError)
     }
 
     fn on_cancelled(&self, app_handle: &tauri::AppHandle) {

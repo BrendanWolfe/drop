@@ -35,6 +35,8 @@ jobs:
             args: ""
 
     runs-on: ${{ matrix.platform }}
+    env:
+      HAS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -70,7 +72,7 @@ jobs:
         # webkitgtk 4.0 is for Tauri v1 - webkitgtk 4.1 is for Tauri v2.
 
       - name: Import Apple Developer Certificate
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-14' && env.HAS_APPLE_CERTIFICATE == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -108,7 +110,7 @@ jobs:
           security find-identity -v -p codesigning build.keychain
 
       - name: Verify Certificate
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-14' && env.HAS_APPLE_CERTIFICATE == 'true'
         run: |
           CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Drop OSS")
           CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
@@ -127,14 +129,14 @@ jobs:
           # "Developer ID Application:"), which never matches our "Drop OSS" cert
           # and fails with "failed to resolve signing identity". Instead we rely on
           # the build.keychain prepared above and only pass the resolved identity.
-          APPLE_SIGNING_IDENTITY: ${{ env.CERT_ID }}
+          APPLE_SIGNING_IDENTITY: ${{ env.CERT_ID || (matrix.platform == 'macos-14' && '-') || '' }}
           NO_STRIP: true
         with:
           tagName: ${{ github.event.release.tag_name || inputs.tagName || format('v__VERSION__-build.{0}', github.run_number) }}
-          releaseName: "Desktop v__VERSION__ (build ${{ github.run_number }})"
-          releaseBody: "Desktop build from commit ${{ github.sha }}. Download the installer for your platform below."
+          releaseName: ${{ github.event.release.name || format('Desktop v__VERSION__ (build {0})', github.run_number) }}
+          releaseBody: ${{ github.event.release.body || format('Desktop build from commit {0}. Download the installer for your platform below.', github.sha) }}
           releaseCommitish: ${{ github.sha }}
           releaseDraft: false
-          prerelease: true
+          prerelease: ${{ github.event_name != 'release' || github.event.release.prerelease }}
           args: ${{ matrix.args }}
           projectPath: "./desktop"

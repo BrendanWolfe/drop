@@ -120,5 +120,6 @@ export type DownloadableMetadata = {
 export type Settings = {
   autostart: boolean;
   maxDownloadThreads: number;
+  maxDownloadSpeed: number;
   forceOffline: boolean;
 };

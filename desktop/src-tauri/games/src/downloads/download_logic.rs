@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::fs::{Permissions, set_permissions};
-use std::io::SeekFrom;
+use std::io::{Error as IoError, ErrorKind, SeekFrom};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use aes::cipher::{KeyIvInit, StreamCipher};
 use download_manager::error::ApplicationDownloadError;
@@ -25,8 +25,20 @@ use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _, AsyncWriteExt as _};
 use tokio_util::io::StreamReader;
 
 const READ_BUF_LEN: usize = 1024 * 1024;
+const STOP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 type Aes128Ctr64LE = ctr::Ctr64LE<aes::Aes128>;
+
+async fn wait_for_stop(control_flag: &DownloadThreadControl) {
+    while control_flag.get() != DownloadThreadControlFlag::Stop {
+        tokio::time::sleep(STOP_POLL_INTERVAL).await;
+    }
+}
+
+fn reset_chunk_progress(download_progress: &ProgressHandle, disk_progress: &ProgressHandle) {
+    download_progress.set(0);
+    disk_progress.set(0);
+}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn download_game_chunk(
@@ -38,6 +50,7 @@ pub async fn download_game_chunk(
     chunk_data: &ChunkData,
     file_list: &HashMap<String, String>,
     base_path: &Path,
+    max_download_threads: usize,
     control_flag: &DownloadThreadControl,
     // How much we're downloading
     download_progress: &ProgressHandle,
@@ -46,8 +59,7 @@ pub async fn download_game_chunk(
 ) -> Result<bool, ApplicationDownloadError> {
     // If we're paused
     if control_flag.get() == DownloadThreadControlFlag::Stop {
-        download_progress.set(0);
-        disk_progress.set(0);
+        reset_chunk_progress(download_progress, disk_progress);
         return Ok(false);
     }
 
@@ -60,12 +72,16 @@ pub async fn download_game_chunk(
         .join(&format!("content/{}/{}/{}", game_id, version_id, chunk_id))
         .map_err(|v| ApplicationDownloadError::DownloadError(v.into()))?;
 
-    let response = DROP_CLIENT_ASYNC
-        .get(url)
-        .header("Authorization", header)
-        .send()
-        .await
-        .map_err(|e| ApplicationDownloadError::Communication(e.into()))?;
+    let response = tokio::select! {
+        response = DROP_CLIENT_ASYNC
+            .get(url)
+            .header("Authorization", header)
+            .send() => response.map_err(|e| ApplicationDownloadError::Communication(e.into()))?,
+        _ = wait_for_stop(control_flag) => {
+            reset_chunk_progress(download_progress, disk_progress);
+            return Ok(false);
+        }
+    };
 
     if response.status() != 200 {
         info!("chunk request got status code: {}", response.status());
@@ -84,8 +100,7 @@ pub async fn download_game_chunk(
     }
 
     if control_flag.get() == DownloadThreadControlFlag::Stop {
-        download_progress.set(0);
-        disk_progress.set(0);
+        reset_chunk_progress(download_progress, disk_progress);
         return Ok(false);
     }
 
@@ -119,7 +134,9 @@ pub async fn download_game_chunk(
                 .create(true)
                 .open(&path)
                 .await?;
-            file_handle.seek(SeekFrom::Start(file.start.try_into().unwrap())).await?;
+            file_handle
+                .seek(SeekFrom::Start(file.start.try_into().unwrap()))
+                .await?;
             Some(file_handle)
         } else {
             None
@@ -127,7 +144,36 @@ pub async fn download_game_chunk(
 
         let mut remaining = file.length;
         while remaining > 0 {
-            let amount = stream_reader.read(&mut read_buf[0..remaining.min(READ_BUF_LEN)]).await?;
+            let read_len = super::limiter::suggested_read_size(max_download_threads, READ_BUF_LEN)
+                .min(remaining);
+
+            if !super::limiter::throttle_bytes(read_len as u64, control_flag).await {
+                reset_chunk_progress(download_progress, disk_progress);
+                return Ok(false);
+            }
+
+            let amount = tokio::select! {
+                result = stream_reader.read(&mut read_buf[0..read_len]) => result?,
+                _ = wait_for_stop(control_flag) => {
+                    super::limiter::refund(read_len as u64);
+                    reset_chunk_progress(download_progress, disk_progress);
+                    return Ok(false);
+                }
+            };
+
+            if amount == 0 {
+                super::limiter::refund(read_len as u64);
+                return Err(IoError::new(
+                    ErrorKind::UnexpectedEof,
+                    "chunk stream ended before the expected number of bytes",
+                )
+                .into());
+            }
+
+            if amount < read_len {
+                super::limiter::refund((read_len - amount) as u64);
+            }
+
             download_progress.add(amount);
             remaining -= amount;
 
@@ -153,7 +199,7 @@ pub async fn download_game_chunk(
         }
 
         if control_flag.get() == DownloadThreadControlFlag::Stop {
-            download_progress.set(0);
+            reset_chunk_progress(download_progress, disk_progress);
             return Ok(false);
         }
     }

@@ -411,6 +411,10 @@ const sorts: Array<StoreSortOption> = [
     name: "Name",
     param: "name",
   },
+  {
+    name: "Size",
+    param: "size",
+  },
 ];
 const currentSort = ref(sorts[0].param);
 const sortOrder = ref<"asc" | "desc">("desc");
