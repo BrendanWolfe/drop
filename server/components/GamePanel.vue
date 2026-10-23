@@ -18,6 +18,10 @@
         :src="imageProps.src"
         class="w-full h-full object-cover brightness-[90%]"
         :alt="imageProps.alt"
+        loading="lazy"
+        decoding="async"
+        width="192"
+        height="256"
       />
       <div
         v-if="showTitleDescription"

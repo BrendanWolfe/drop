@@ -15,10 +15,7 @@
     </div>
     <!-- main page -->
     <div
-      :class="[
-        'max-w-7xl w-full min-h-screen mx-auto px-5 py-4 sm:px-16 sm:py-12 rounded-xl', // layout stuff
-        'bg-zinc-950/90 backdrop-blur-[500px] backdrop-saturate-200 backdrop-brightness-200', // make a soft, colourful glow background
-      ]"
+      class="max-w-7xl w-full min-h-screen mx-auto px-5 py-4 sm:px-16 sm:py-12 rounded-xl bg-zinc-950/90"
     >
       <h1
         class="text-3xl md:text-5xl font-bold font-display text-zinc-100 pb-4 border-b border-zinc-800"
@@ -26,9 +23,11 @@
         {{ game.mName }}
       </h1>
 
-      <div class="mt-8 grid grid-cols-1 lg:grid-cols-4 gap-10">
+      <div
+        class="mt-8 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-10"
+      >
         <div
-          class="col-start-1 lg:col-start-4 flex flex-col gap-y-6 items-center"
+          class="col-start-1 lg:col-start-2 flex flex-col gap-y-6 items-center"
         >
           <img
             class="transition-all duration-300 hover:scale-105 hover:rotate-[-1deg] w-64 h-auto rounded gameCover"
@@ -241,7 +240,7 @@
           </table>
         </div>
 
-        <div class="row-start-2 lg:row-start-1 lg:col-span-3">
+        <div class="min-w-0 row-start-2 lg:row-start-1">
           <p class="text-lg text-zinc-400">
             {{ game.mShortDescription }}
           </p>
@@ -254,6 +253,8 @@
                 <img
                   class="w-fit h-48 lg:h-96 rounded"
                   :src="useObject(image)"
+                  loading="lazy"
+                  decoding="async"
                 />
               </VueSlide>
               <VueSlide v-if="game.mImageCarouselObjectIds.length == 0">

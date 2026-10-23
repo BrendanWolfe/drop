@@ -307,7 +307,6 @@
             <!-- Product grid -->
             <div
               v-if="games?.length ?? 0 > 0"
-              ref="product-grid"
               class="col-span-4 grid gap-5 grid-cols-[repeat(auto-fill,minmax(150px,auto))]"
             >
               <!-- Your content -->
@@ -471,47 +470,59 @@ const filterQuery = computed(() => {
 
 const games = ref<Array<SerializeObject<GameModel>>>();
 const loading = ref(false);
-
-const productGrid = useTemplateRef<HTMLElement>("product-grid");
-
-const { reset } = useInfiniteScroll(
-  productGrid,
-  async () => await updateGames(filterQuery.value, false),
-  {
-    distance: 10,
-    canLoadMore: () => {
-      return canLoadMore.value;
-    },
-  },
-);
-
 const canLoadMore = ref(true);
+
+let requestId = 0;
 async function updateGames(query: string, resetGames: boolean) {
+  if (!resetGames && (loading.value || !canLoadMore.value)) return;
+
+  const currentRequestId = ++requestId;
   loading.value = true;
   games.value ??= [];
-  const newValues = await $dropFetch<{
-    results: Array<SerializeObject<GameModel>>;
-    count: number;
-  }>(
-    `/api/v1/store?take=50&skip=${resetGames ? 0 : games.value?.length || 0}&sort=${currentSort.value}&order=${sortOrder.value}${query ? "&" + query : ""}`,
-  );
-  if (resetGames) {
-    games.value = newValues.results;
-    if (import.meta.client) await reset();
-  } else {
-    games.value.push(...newValues.results);
+
+  try {
+    const newValues = await $dropFetch<{
+      results: Array<SerializeObject<GameModel>>;
+      count: number;
+    }>(
+      `/api/v1/store?take=50&skip=${resetGames ? 0 : games.value.length}&sort=${currentSort.value}&order=${sortOrder.value}${query ? "&" + query : ""}`,
+    );
+
+    if (currentRequestId !== requestId) return;
+
+    if (resetGames) {
+      games.value = newValues.results;
+    } else {
+      games.value.push(...newValues.results);
+    }
+    canLoadMore.value =
+      newValues.results.length > 0 && games.value.length < newValues.count;
+  } catch {
+    if (currentRequestId === requestId) canLoadMore.value = false;
+  } finally {
+    if (currentRequestId === requestId) loading.value = false;
   }
-  canLoadMore.value = games.value.length < newValues.count;
-  loading.value = false;
 }
-watch(filterQuery, (newUrl) => {
-  updateGames(newUrl, true);
+
+function handleWindowScroll() {
+  if (loading.value || !canLoadMore.value) return;
+
+  const remaining =
+    document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
+
+  if (remaining <= 300) void updateGames(filterQuery.value, false);
+}
+
+onMounted(() => {
+  window.addEventListener("scroll", handleWindowScroll, { passive: true });
 });
-watch(currentSort, (_) => {
-  updateGames(filterQuery.value, true);
+
+onBeforeUnmount(() => {
+  window.removeEventListener("scroll", handleWindowScroll);
 });
-watch(sortOrder, (_) => {
-  updateGames(filterQuery.value, true);
+
+watch([filterQuery, currentSort, sortOrder], () => {
+  void updateGames(filterQuery.value, true);
 });
 
 await updateGames(filterQuery.value, true);

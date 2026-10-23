@@ -10,13 +10,15 @@
       :pause-autoplay-on-hover="true"
       class="store-carousel"
     >
-      <VueSlide v-for="game in recent" :key="game.id">
+      <VueSlide v-for="(game, index) in recent" :key="game.id">
         <div class="w-full h-full relative">
           <div class="absolute inset-0">
             <img
               :src="useObject(game.mBannerObjectId)"
               alt=""
               class="size-full object-cover object-center"
+              :loading="index === 0 ? 'eager' : 'lazy'"
+              decoding="async"
             />
           </div>
           <div
