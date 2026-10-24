@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "drop-app"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1984,6 +1984,7 @@ dependencies = [
  "sha2 0.10.9",
  "sysinfo 0.37.2",
  "tauri",
+ "tempfile",
  "throttle_my_fn",
  "tokio",
  "tokio-util",

@@ -22,6 +22,7 @@ import { fuzzy } from "fast-fuzzy";
 import { logger } from "~/server/internal/logging";
 import { createGameImportTaskId } from "../library";
 import type { GameTagModel } from "~/prisma/client/models";
+import { importedImageFields } from "./images";
 
 export class MissingMetadataProviderConfig extends Error {
   private providerName: string;
@@ -290,7 +291,7 @@ export class MetadataHandler {
             mIconObjectId: metadata.icon,
             mBannerObjectId: metadata.bannerId,
             mCoverObjectId: metadata.coverId,
-            mImageLibraryObjectIds: metadata.images,
+            ...importedImageFields(metadata.images),
 
             publishers: {
               connect: metadata.publishers,

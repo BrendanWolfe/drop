@@ -179,7 +179,7 @@ pub mod data {
             SetupRequired,
             Installed,
             PartiallyInstalled {
-                #[serde(skip)]
+                #[serde(default)]
                 configuration: UserConfiguration,
             },
         }
@@ -323,7 +323,7 @@ pub mod data {
 
     #[cfg(test)]
     mod tests {
-        use super::Settings;
+        use super::{InstalledGameType, Settings, UserConfiguration};
 
         #[test]
         fn settings_default_speed_is_unlimited() {
@@ -356,6 +356,48 @@ pub mod data {
 
             let round_trip: Settings = ron::from_str(&encoded).expect("settings should round trip");
             assert_eq!(round_trip.max_download_speed, 1_048_576);
+        }
+
+        #[test]
+        fn partially_installed_configuration_round_trips() {
+            let configuration = UserConfiguration {
+                launch_template: "proton run {}".to_owned(),
+                override_proton_path: Some("/custom/proton".to_owned()),
+                override_handler: Some("custom-handler".to_owned()),
+                enable_updates: true,
+            };
+            let install_type = InstalledGameType::PartiallyInstalled {
+                configuration: configuration.clone(),
+            };
+
+            let encoded =
+                ron::to_string(&install_type).expect("partially installed should serialize");
+            assert!(encoded.contains("configuration"));
+
+            let round_trip: InstalledGameType =
+                ron::from_str(&encoded).expect("partially installed should round trip");
+            match round_trip {
+                InstalledGameType::PartiallyInstalled {
+                    configuration: decoded,
+                } => {
+                    assert_eq!(decoded, configuration);
+                }
+                other => panic!("expected partially installed, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn partially_installed_without_configuration_uses_default() {
+            let decoded: InstalledGameType = ron::from_str("(type:\"PartiallyInstalled\")").expect(
+                "legacy partially installed entries without configuration should deserialize",
+            );
+
+            match decoded {
+                InstalledGameType::PartiallyInstalled { configuration } => {
+                    assert_eq!(configuration, UserConfiguration::default());
+                }
+                other => panic!("expected partially installed, got {other:?}"),
+            }
         }
     }
 }

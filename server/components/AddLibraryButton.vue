@@ -1,7 +1,7 @@
 <template>
   <div class="flex w-full flex-col gap-y-3">
     <div
-      class="inline-flex w-full group hover:scale-105 transition-all duration-200"
+      class="inline-flex h-12 w-full shrink-0 group hover:scale-105 transition-all duration-200"
     >
       <LoadingButton
         :loading="isLibraryLoading"

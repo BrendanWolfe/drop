@@ -104,7 +104,8 @@ impl DropData {
             Err(_) => return,
         };
 
-        let mut file = match File::create(self.base_path.join(DROPDATA_PATH)) {
+        let checkpoint_path = self.base_path.join(format!("{DROPDATA_PATH}.tmp"));
+        let mut file = match File::create(&checkpoint_path) {
             Ok(file) => file,
             Err(e) => {
                 error!("{e}");
@@ -112,9 +113,13 @@ impl DropData {
             }
         };
 
-        match file.write_all(&manifest_raw) {
-            Ok(()) => {}
-            Err(e) => error!("{e}"),
+        if let Err(e) = file.write_all(&manifest_raw) {
+            error!("{e}");
+            return;
+        }
+        drop(file);
+        if let Err(e) = std::fs::rename(checkpoint_path, self.base_path.join(DROPDATA_PATH)) {
+            error!("{e}");
         }
     }
     pub fn set_contexts(&self, completed_contexts: &[(String, bool)]) {
@@ -128,5 +133,60 @@ impl DropData {
     }
     pub fn get_contexts(&self) -> HashMap<String, bool> {
         lock!(self.contexts).clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_chunks_survive_repeated_checkpoints_and_recreation() {
+        let directory = tempfile::tempdir().unwrap();
+        let configuration = UserConfiguration {
+            enable_updates: true,
+            ..Default::default()
+        };
+        let data = DropData::generate(
+            "game".into(),
+            "version".into(),
+            Platform::Linux,
+            directory.path().to_path_buf(),
+            configuration.clone(),
+        );
+        data.set_context("first".into(), true);
+        data.write();
+        data.set_context("second".into(), true);
+        data.write();
+
+        let resumed = DropData::generate(
+            "game".into(),
+            "version".into(),
+            Platform::Linux,
+            directory.path().to_path_buf(),
+            configuration.clone(),
+        );
+        assert_eq!(resumed.get_contexts(), data.get_contexts());
+        assert_eq!(resumed.get_contexts().len(), 2);
+        assert_eq!(resumed.configuration, configuration);
+        assert!(!directory.path().join(".dropdata.tmp").exists());
+    }
+
+    #[test]
+    fn interrupted_checkpoint_preserves_last_completed_chunks() {
+        let directory = tempfile::tempdir().unwrap();
+        let data = DropData::generate(
+            "game".into(),
+            "version".into(),
+            Platform::Linux,
+            directory.path().to_path_buf(),
+            UserConfiguration::default(),
+        );
+        data.set_context("first".into(), true);
+        data.write();
+        std::fs::write(directory.path().join(".dropdata.tmp"), b"incomplete").unwrap();
+
+        let resumed = DropData::read(directory.path()).unwrap();
+        assert_eq!(resumed.get_contexts().get("first"), Some(&true));
     }
 }

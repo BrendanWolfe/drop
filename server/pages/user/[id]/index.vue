@@ -11,7 +11,9 @@
           {{ profile?.displayName ?? profile?.username ?? $t("user.unknown") }}
         </h1>
         <!-- eslint-disable-next-line @intlify/vue-i18n/no-raw-text -->
-        <div v-if="profile" class="text-zinc-400 mt-1">@{{ profile.username }}</div>
+        <div v-if="profile" class="text-zinc-400 mt-1">
+          @{{ profile.username }}
+        </div>
         <p v-else class="text-zinc-400 mt-1">{{ $t("user.notFound") }}</p>
       </div>
     </div>

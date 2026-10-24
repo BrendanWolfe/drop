@@ -3,6 +3,7 @@ import prisma from "~/server/internal/db/database";
 import objectHandler from "~/server/internal/objects";
 import { type } from "arktype";
 import { readDropValidatedBody, throwingArktype } from "~/server/arktype";
+import { removeImageFromCarousel } from "~/server/internal/metadata/images";
 
 const DeleteGameImage = type({
   gameId: "string",
@@ -27,6 +28,7 @@ export default defineEventHandler<{
     select: {
       mBannerObjectId: true,
       mImageLibraryObjectIds: true,
+      mImageCarouselObjectIds: true,
       mCoverObjectId: true,
     },
   });
@@ -39,6 +41,10 @@ export default defineEventHandler<{
     throw createError({ statusCode: 400, statusMessage: "Image not found" });
 
   game.mImageLibraryObjectIds.splice(imageIndex, 1);
+  game.mImageCarouselObjectIds = removeImageFromCarousel(
+    game.mImageCarouselObjectIds,
+    imageId,
+  );
   await objectHandler.deleteAsSystem(imageId);
 
   if (game.mBannerObjectId === imageId) {
@@ -56,11 +62,13 @@ export default defineEventHandler<{
       data: {
         mBannerObjectId: game.mBannerObjectId,
         mImageLibraryObjectIds: game.mImageLibraryObjectIds,
+        mImageCarouselObjectIds: game.mImageCarouselObjectIds,
         mCoverObjectId: game.mCoverObjectId,
       },
       select: {
         mBannerObjectId: true,
         mImageLibraryObjectIds: true,
+        mImageCarouselObjectIds: true,
         mCoverObjectId: true,
       },
     })

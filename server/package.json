@@ -1,6 +1,6 @@
 {
   "name": "drop",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-or-later",
@@ -13,7 +13,7 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare && prisma generate && buf generate",
-    "test": "node --experimental-strip-types --experimental-test-module-mocks --test build/launch.test.ts server/internal/library/preload.test.ts server/internal/objects/transactional.test.ts server/internal/setup/index.test.ts",
+    "test": "node --experimental-strip-types --experimental-test-module-mocks --test build/launch.test.ts server/internal/library/preload.test.ts server/internal/metadata/images.test.ts server/internal/objects/transactional.test.ts server/internal/setup/index.test.ts",
     "typecheck": "nuxt typecheck",
     "lint": "pnpm run lint:eslint && pnpm run lint:prettier",
     "lint:eslint": "eslint .",

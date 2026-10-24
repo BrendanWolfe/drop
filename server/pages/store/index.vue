@@ -40,11 +40,11 @@
               </p>
               <div>
                 <div
-                  class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-4 w-fit mx-auto"
+                  class="mt-8 grid grid-cols-1 lg:grid-cols-2 items-start gap-4 w-fit mx-auto"
                 >
                   <NuxtLink
                     :href="`/store/${game.id}`"
-                    class="block w-full rounded-md border border-transparent bg-white px-8 py-3 text-base font-medium text-gray-900 hover:bg-gray-100 sm:w-auto duration-200 hover:scale-105"
+                    class="inline-flex h-12 w-full items-center justify-center rounded-md border border-transparent bg-white px-8 text-base font-medium text-gray-900 hover:bg-gray-100 sm:w-auto duration-200 hover:scale-105"
                     >{{ $t("store.lookAt") }}</NuxtLink
                   >
                   <AddLibraryButton :game-id="game.id" />

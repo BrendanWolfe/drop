@@ -896,17 +896,16 @@ async function updateCoverImage(id: string) {
 
 async function deleteImage(id: string) {
   try {
-    const { mBannerObjectId, mImageLibraryObjectIds } = await $dropFetch(
-      "/api/v1/admin/game/image",
-      {
+    const { mBannerObjectId, mImageLibraryObjectIds, mImageCarouselObjectIds } =
+      await $dropFetch("/api/v1/admin/game/image", {
         method: "DELETE",
         body: {
           gameId: game.value.id,
           imageId: id,
         },
-      },
-    );
+      });
     game.value.mImageLibraryObjectIds = mImageLibraryObjectIds;
+    game.value.mImageCarouselObjectIds = mImageCarouselObjectIds;
     game.value.mBannerObjectId = mBannerObjectId;
   } catch (e) {
     createModal(

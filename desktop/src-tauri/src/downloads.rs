@@ -98,15 +98,10 @@ pub async fn resume_download(game_id: String) -> Result<(), ApplicationDownloadE
 
     let sender = DOWNLOAD_MANAGER.get_sender();
 
-    let install_dir = PathBuf::from(install_dir);
-    let install_dir = install_dir
-        .parent()
-        .expect("game somehow installed at root");
-
     let game_download_agent = Arc::new(Box::new(
-        GameDownloadAgent::new(
+        GameDownloadAgent::new_at_path(
             meta,
-            install_dir.to_path_buf(),
+            PathBuf::from(install_dir),
             sender,
             DOWNLOAD_MANAGER.clone_depot_manager(),
             configuration,

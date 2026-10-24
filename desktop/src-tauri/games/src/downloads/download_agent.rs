@@ -33,7 +33,9 @@ use tokio::sync::mpsc::Sender;
 use utils::{app_emit, lock};
 
 use crate::downloads::utils::get_disk_available;
-use crate::library::{Game, on_game_complete, push_game_update, set_partially_installed};
+use crate::library::{
+    Game, on_game_complete, push_game_update, set_partially_installed, set_partially_installed_db,
+};
 use crate::state::GameStatusManager;
 
 use super::download_logic::download_game_chunk;
@@ -76,9 +78,6 @@ impl GameDownloadAgent {
         depot_manager: Arc<DepotManager>,
         configuration: UserConfiguration,
     ) -> Result<Self, ApplicationDownloadError> {
-        // Don't run by default
-        let control_flag = DownloadThreadControl::new(DownloadThreadControlFlag::Stop);
-
         let game_name = get_cached_object::<Game>(&format!("game/{}", metadata.id))
             .map(|v| v.library_path)
             .unwrap_or(metadata.id.clone());
@@ -88,6 +87,25 @@ impl GameDownloadAgent {
         let data_base_dir_path = base_dir_path.join(game_name);
         info!("data dir path {}", data_base_dir_path.display());
 
+        Self::new_at_path(
+            metadata,
+            data_base_dir_path,
+            sender,
+            depot_manager,
+            configuration,
+        )
+        .await
+    }
+
+    pub async fn new_at_path(
+        metadata: DownloadableMetadata,
+        data_base_dir_path: PathBuf,
+        sender: Sender<DownloadManagerSignal>,
+        depot_manager: Arc<DepotManager>,
+        configuration: UserConfiguration,
+    ) -> Result<Self, ApplicationDownloadError> {
+        // Don't run by default
+        let control_flag = DownloadThreadControl::new(DownloadThreadControlFlag::Stop);
         create_dir_all(data_base_dir_path.clone())?;
 
         let stored_manifest = DropData::generate(
@@ -153,7 +171,19 @@ impl GameDownloadAgent {
 
     // Blocking
     pub fn setup_download(&self, app_handle: &AppHandle) -> Result<(), ApplicationDownloadError> {
+        if !self.check_manifest_exists() {
+            return Err(ApplicationDownloadError::NotInitialized);
+        }
+
+        self.dropdata.write();
         let mut db_lock = borrow_db_mut_checked();
+        set_partially_installed_db(
+            &mut db_lock,
+            &self.metadata,
+            self.dropdata.base_path.display().to_string(),
+            None,
+            self.configuration.clone(),
+        );
         let status = ApplicationTransientStatus::Downloading {
             version_id: self.metadata.version.clone(),
         };
@@ -161,12 +191,12 @@ impl GameDownloadAgent {
             .applications
             .transient_statuses
             .insert(self.metadata(), status.clone());
-        // Don't use GameStatusManager because this game isn't installed
-        push_game_update(app_handle, &self.metadata().id, None, (None, Some(status)));
-
-        if !self.check_manifest_exists() {
-            return Err(ApplicationDownloadError::NotInitialized);
-        }
+        push_game_update(
+            app_handle,
+            &self.metadata.id,
+            None,
+            GameStatusManager::fetch_state(&self.metadata.id, &db_lock),
+        );
 
         Ok(())
     }
@@ -318,15 +348,45 @@ impl GameDownloadAgent {
 
         let local_completed_chunks = completed_chunks.clone();
 
-        let mut chunk_completions = FuturesUnordered::new();
+        // Restore all completed bytes before starting any network work.
+        for (index, (version_id, chunk_id, chunk_data)) in manifests_chunks
+            .iter()
+            .flat_map(|(version_id, chunks, _)| {
+                chunks.iter().map(move |(id, data)| (version_id, id, data))
+            })
+            .enumerate()
+        {
+            if !local_completed_chunks
+                .get(chunk_id)
+                .copied()
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            ProgressHandle::new(
+                self.download_progress.get(index),
+                self.download_progress.clone(),
+            )
+            .skip(chunk_data.files.iter().map(|file| file.length).sum());
+            ProgressHandle::new(self.disk_progress.get(index), self.disk_progress.clone()).skip(
+                chunk_data
+                    .files
+                    .iter()
+                    .filter(|file| file_list.get(&file.filename) == Some(version_id))
+                    .map(|file| file.length)
+                    .sum(),
+            );
+        }
 
-        let mut outputs = Vec::new();
+        let mut chunk_completions = FuturesUnordered::new();
 
         let mut handle_output =
             |value: Result<Option<String>, ApplicationDownloadError>| match value {
                 Ok(value) => {
                     if let Some(chunk_id) = value {
-                        outputs.push(chunk_id);
+                        completed_chunks.insert(chunk_id.clone(), true);
+                        self.dropdata.set_context(chunk_id, true);
+                        self.dropdata.write();
                     }
                     Ok(())
                 }
@@ -345,10 +405,7 @@ impl GameDownloadAgent {
                     ProgressHandle::new(self.disk_progress.get(index), self.disk_progress.clone());
                 index += 1;
 
-                let chunk_length = chunk_data.files.iter().map(|v| v.length).sum();
-
                 if *local_completed_chunks.get(&chunk_id).unwrap_or(&false) {
-                    download_progress_handle.skip(chunk_length);
                     continue;
                 }
 
@@ -421,19 +478,7 @@ impl GameDownloadAgent {
             handle_output(value)?
         }
 
-        for completed_chunk in outputs {
-            completed_chunks.insert(completed_chunk, true);
-        }
-
-        let drop_data_chunks = completed_chunks
-            .iter()
-            .map(|v| (v.0.to_string(), *v.1))
-            .collect::<Vec<(String, bool)>>();
-
-        self.dropdata.set_contexts(&drop_data_chunks);
-        self.dropdata.write();
-
-        info!("completed {} chunks", drop_data_chunks.len());
+        info!("completed {} chunks", completed_chunks.len());
 
         // If there are any contexts left which are false
         if completed_chunks.len() != chunk_len {
