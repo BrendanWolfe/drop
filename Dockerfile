@@ -5,7 +5,8 @@
 FROM node:lts-bookworm-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+# Recent Node LTS images no longer bundle Corepack.
+RUN npm install --global corepack@0.36.0 && corepack enable
 WORKDIR /app
 
 ## so corepack knows pnpm's version
@@ -63,7 +64,7 @@ FROM node:lts-bookworm-slim AS run-system
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-RUN corepack enable
+RUN npm install --global corepack@0.36.0 && corepack enable
 WORKDIR /app
 COPY package.json ./
 

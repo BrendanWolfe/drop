@@ -183,3 +183,18 @@ test("runtime image carries the files and local dependencies launch needs", asyn
   assert.match(contents, /ENV PORT=4000/);
   assert.match(contents, /CMD \["sh", "\/app\/startup\/launch\.sh"\]/);
 });
+
+test("both Node image stages install Corepack before enabling it", async () => {
+  const contents = await readFile(dockerfile, "utf8");
+  const nodeStages = contents
+    .split(/^FROM /m)
+    .filter((stage) => stage.startsWith("node:"));
+
+  assert.equal(nodeStages.length, 2);
+  for (const stage of nodeStages) {
+    assert.match(
+      stage,
+      /RUN npm install --global corepack@\d+\.\d+\.\d+ && corepack enable/,
+    );
+  }
+});

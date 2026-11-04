@@ -38,6 +38,12 @@ old record and cancels its cleanup marker.
 - Tokens are sent only to the active server's exact origin (scheme, host, and effective
   port), including sign-in, native APIs, background work, Store proxying, metadata,
   same-origin downloads, and WebSocket handshakes.
+- The built-in depot is advertised as `/api/v1/depot/` and resolved against the server
+  address entered in desktop setup, not the server's `EXTERNAL_URL`. LAN connections
+  download over the LAN; public connections download through the public reverse proxy.
+  Manifest, speed-test, and chunk requests all use that resolved endpoint. Absolute
+  URLs remain supported for external depots. Both server and desktop must be updated;
+  older desktop versions cannot resolve the new relative built-in endpoint.
 - External depot/download hosts do not receive these tokens. Each separately protected
   depot must be made accessible independently; the desktop client never guesses that
   another host is trusted.

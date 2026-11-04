@@ -1,8 +1,8 @@
-import { systemConfig } from "../internal/config/sys-conf";
-import prisma from "../internal/db/database";
+import prisma from "../internal/db/database.ts";
 
 export default defineNitroPlugin(async () => {
-  const torrentialUrl = `${systemConfig.getExternalUrl()}/api/v1/depot/`;
+  // Resolve against each client's configured server so LAN and proxy connections use their own origin.
+  const torrentialUrl = "/api/v1/depot/";
 
   await prisma.depot.upsert({
     where: {
