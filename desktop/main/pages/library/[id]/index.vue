@@ -929,7 +929,10 @@ async function queue() {
 }
 
 async function uninstall() {
-  if (steamActions.value && !(await steamActions.value.beforeUninstall()))
+  if (
+    steamActions.value?.beforeUninstall &&
+    !(await steamActions.value.beforeUninstall())
+  )
     return;
   await invoke("uninstall_game", { gameId: game.id });
 }

@@ -391,15 +391,18 @@ watch(cleanupOpen, (value) => {
   if (!value && cleanupResolve) resolveCleanup(false);
 });
 onMounted(refresh);
-const unlisten = await listen("steam_changed", () => {
+// Do not `await` these: a top-level await makes setup() async, and defineExpose
+// registered after an await is invisible to the parent's template ref, which
+// breaks callers of `steamActions.value.beforeUninstall()`.
+const unlisten = listen("steam_changed", () => {
   void refresh();
 });
-const unlistenGame = await listen(`update_game/${props.gameId}`, () => {
+const unlistenGame = listen(`update_game/${props.gameId}`, () => {
   void refresh();
 });
 onBeforeUnmount(() => {
-  unlisten();
-  unlistenGame();
+  unlisten.then((fn) => fn());
+  unlistenGame.then((fn) => fn());
   resolveCleanup(false);
 });
 defineExpose({ preferSteam, play, beforeUninstall });

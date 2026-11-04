@@ -354,7 +354,10 @@ async function saved() {
   await refresh();
 }
 async function remove() {
-  if (steamActions.value && !(await steamActions.value.beforeUninstall()))
+  if (
+    steamActions.value?.beforeUninstall &&
+    !(await steamActions.value.beforeUninstall())
+  )
     return;
   busy.value = true;
   error.value = "";
