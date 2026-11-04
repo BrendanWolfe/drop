@@ -30,9 +30,8 @@ Object.defineProperty(globalThis, "defineNitroPlugin", {
   configurable: true,
 });
 
-const { default: plugin } = await import(
-  "../server/plugins/07.torrential-depot.ts"
-);
+const { default: plugin } =
+  await import("../server/plugins/07.torrential-depot.ts");
 const initializeDepot = plugin as unknown as () => Promise<void>;
 
 test("startup advertises a relative built-in depot for new installations", async () => {

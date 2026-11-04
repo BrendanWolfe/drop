@@ -65,7 +65,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter drop... --filter my-nuxt-layer...
 
       - name: Deploy released migrations before testing the upgrade
         if: matrix.history != 'fresh'
@@ -121,7 +121,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile --filter drop... --filter my-nuxt-layer...
 
       - name: Typecheck
         working-directory: server
@@ -144,7 +144,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile --filter drop... --filter my-nuxt-layer...
 
       - name: Lint
         working-directory: server

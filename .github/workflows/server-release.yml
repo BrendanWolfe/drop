@@ -13,6 +13,8 @@ env:
 
 jobs:
   build:
+    outputs:
+      today: ${{ steps.get_final_ver.outputs.today }}
     strategy:
       fail-fast: false
       matrix:
@@ -37,8 +39,8 @@ jobs:
       - name: Prepare
         run: |
           platform=${{ matrix.platform }}
-          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
-          echo "REGISTRY_IMAGE=${REGISTRY_IMAGE,,}" >> $GITHUB_ENV
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+          echo "REGISTRY_IMAGE=${REGISTRY_IMAGE,,}" >> "$GITHUB_ENV"
 
       - name: Docker meta
         id: meta
@@ -68,7 +70,7 @@ jobs:
           TODAY=$(date +'%Y.%m.%d')
 
           echo "Today will be: $TODAY"
-          echo "today=$TODAY" >> $GITHUB_OUTPUT
+          echo "today=$TODAY" >> "$GITHUB_OUTPUT"
 
           if [[ "${{ github.event_name }}" == "release" ]]; then
             FINAL_VER="$RELEASE_TAG"
@@ -79,7 +81,7 @@ jobs:
           fi
 
           echo "Drop's release tag will be: $FINAL_VER"
-          echo "final_ver=$FINAL_VER" >> $GITHUB_OUTPUT
+          echo "final_ver=$FINAL_VER" >> "$GITHUB_OUTPUT"
 
       - name: Build and push by digest
         id: build
@@ -118,7 +120,7 @@ jobs:
       contents: read
     steps:
       - name: Prepare registry image
-        run: echo "REGISTRY_IMAGE=${REGISTRY_IMAGE,,}" >> $GITHUB_ENV
+        run: echo "REGISTRY_IMAGE=${REGISTRY_IMAGE,,}" >> "$GITHUB_ENV"
 
       - name: Download digests
         uses: actions/download-artifact@v8
@@ -144,7 +146,7 @@ jobs:
             ${{ env.REGISTRY_IMAGE }}
           tags: |
             type=schedule,pattern=nightly
-            type=schedule,pattern=nightly.${{ steps.get_final_ver.outputs.today }}
+            type=schedule,pattern=nightly.${{ needs.build.outputs.today }}
             type=semver,pattern=v{{version}}
             type=semver,pattern=v{{major}}.{{minor}}
             type=semver,pattern=v{{major}}
@@ -157,8 +159,16 @@ jobs:
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)
+          tag_list="$(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+          mapfile -t tags <<< "$tag_list"
+          args=()
+          for tag in "${tags[@]}"; do
+            args+=(--tag "$tag")
+          done
+          for digest in *; do
+            args+=("${REGISTRY_IMAGE}@sha256:${digest}")
+          done
+          docker buildx imagetools create "${args[@]}"
 
       - name: Inspect image
         run: |

@@ -41,6 +41,8 @@ FROM base AS build-system
 
 ENV NODE_ENV=production
 ENV NUXT_TELEMETRY_DISABLED=1
+# Nitro bundles the full server and emoji assets; Node's default heap is too small.
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 ## add git so drop can determine its git ref at build
 RUN apt-get update && apt-get install -y --no-install-recommends git \
