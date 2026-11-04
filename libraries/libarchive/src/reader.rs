@@ -35,8 +35,28 @@ unsafe extern "C" fn stream_read_callback(
 pub trait Reader: Handle {
     fn entry(&mut self) -> &mut ReaderEntry;
 
+    /// Unlike next_header, distinguish a clean EOF from a corrupt archive.
+    fn next_header_checked(&mut self) -> ArchiveResult<Option<&mut ReaderEntry>> {
+        let result = unsafe { ffi::archive_read_next_header(self.handle(), &mut self.entry().handle) };
+        match result {
+            ffi::ARCHIVE_OK => Ok(Some(self.entry())),
+            ffi::ARCHIVE_EOF => Ok(None),
+            _ => Err(ArchiveError::Sys(self.err_code(), self.err_msg())),
+        }
+    }
+
     fn header_position(&self) -> i64 {
         unsafe { ffi::archive_read_header_position(self.handle()) }
+    }
+
+    /// Read entry data as a byte stream, including zero-filled sparse regions.
+    fn read_data(&self, buffer: &mut [u8]) -> ArchiveResult<usize> {
+        let result = unsafe { ffi::archive_read_data(self.handle(), buffer.as_mut_ptr() as *mut c_void, buffer.len()) };
+        if result < 0 {
+            Err(ArchiveError::Sys(self.err_code(), self.err_msg()))
+        } else {
+            Ok(result as usize)
+        }
     }
 
     fn next_header(&mut self) -> Option<&mut ReaderEntry> {
@@ -114,9 +134,19 @@ impl Pipe {
 impl FileReader {
     pub fn open<T: AsRef<Path>>(mut builder: Builder, file: T) -> ArchiveResult<Self> {
         builder.check_consumed()?;
+        #[cfg(not(windows))]
         let c_file = CString::new(file.as_ref().to_string_lossy().as_bytes()).unwrap();
+        #[cfg(windows)]
+        let c_file = {
+            use std::os::windows::ffi::OsStrExt;
+            file.as_ref().as_os_str().encode_wide().chain(Some(0)).collect::<Vec<u16>>()
+        };
         unsafe {
-            match ffi::archive_read_open_filename(builder.handle(), c_file.as_ptr(), BLOCK_SIZE) {
+            #[cfg(not(windows))]
+            let result = ffi::archive_read_open_filename(builder.handle(), c_file.as_ptr(), BLOCK_SIZE);
+            #[cfg(windows)]
+            let result = ffi::archive_read_open_filename_w(builder.handle(), c_file.as_ptr(), BLOCK_SIZE);
+            match result {
                 ffi::ARCHIVE_OK => {
                     builder.consume();
                     Ok(Self::new(builder.handle()))

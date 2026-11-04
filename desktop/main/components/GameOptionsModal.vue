@@ -88,10 +88,12 @@ import type { GameVersion } from "~/types";
 const appState = useAppState();
 
 const open = defineModel<boolean>();
-const props = defineProps<{ gameId: string }>();
+const props = defineProps<{ gameId: string; local?: boolean }>();
 const game = await useGame(props.gameId);
 
-const configuration: Ref<GameVersion["userConfiguration"]> = ref(game.version.value!.userConfiguration);
+const configuration: Ref<GameVersion["userConfiguration"]> = ref(
+  game.version.value!.userConfiguration,
+);
 
 const hasWindows = !!(
   game.version.value!.setups.find((v) => v.platform === "Windows") ??
@@ -108,11 +110,15 @@ const tabs: Array<{ name: string; icon: Component; page: Component }> = [
     icon: RocketLaunchIcon,
     page: Launch,
   },
-  {
-    name: "Updates",
-    icon: ArrowPathIcon,
-    page: Updates,
-  },
+  ...(!props.local
+    ? [
+        {
+          name: "Updates",
+          icon: ArrowPathIcon,
+          page: Updates,
+        },
+      ]
+    : []),
 ];
 const currentTabIndex = ref(0);
 

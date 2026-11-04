@@ -27,6 +27,15 @@
       </button>
     </div>
 
+    <button
+      type="button"
+      class="mb-4 inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-700 px-3 py-2 text-sm font-semibold text-zinc-200 hover:border-blue-500 hover:bg-zinc-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+      @click="addGameOpen = true"
+    >
+      <PlusIcon class="size-4" />Add game
+    </button>
+    <AddGameModal v-if="addGameOpen" v-model="addGameOpen" />
+
     <TransitionGroup
       name="list"
       tag="ul"
@@ -36,7 +45,12 @@
         as="div"
         v-for="(nav, navIndex) in filteredNavigation"
         :key="nav.id"
-        :class="['first:pt-0 last:pb-0', nav.tools && !filteredNavigation[navIndex - 1].tools ? 'mt-auto' : '']"
+        :class="[
+          'first:pt-0 last:pb-0',
+          nav.tools && !filteredNavigation[navIndex - 1]?.tools
+            ? 'mt-auto'
+            : '',
+        ]"
         v-slot="{ open }"
         :default-open="nav.deft"
       >
@@ -90,15 +104,17 @@
                 <p
                   class="truncate text-[10px] font-bold uppercase font-display"
                   :class="[
-                    getGameStatusStyleText(games[item.id].status.value)[0],
+                    getGameStatusStyleText(games[item.id]!.status.value)[0],
                   ]"
                 >
-                  {{ getGameStatusStyleText(games[item.id].status.value)[1] }}
+                  {{ getGameStatusStyleText(games[item.id]!.status.value)[1] }}
                 </p>
               </div>
             </div>
           </NuxtLink>
-          <span v-if="nav.items.length == 0" class="text-xs text-zinc-500 mx-auto"
+          <span
+            v-if="nav.items.length == 0"
+            class="text-xs text-zinc-500 mx-auto"
             >No games in this category</span
           >
         </DisclosurePanel>
@@ -154,6 +170,7 @@ import { listen } from "@tauri-apps/api/event";
 const gameStatusTextStyle: { [key in EmptyGameStatusEnum]: string } = {
   Downloading: "text-zinc-400",
   Validating: "text-blue-300",
+  Extracting: "text-blue-300",
   Running: "text-blue-500",
   Remote: "text-zinc-700",
   Queued: "text-zinc-400",
@@ -165,6 +182,7 @@ const gameStatusText: { [key in EmptyGameStatusEnum]: string } = {
   Queued: "Queued",
   Downloading: "Downloading...",
   Validating: "Validating...",
+  Extracting: "Extracting...",
   Updating: "Updating...",
   Uninstalling: "Uninstalling...",
   Running: "Running",
@@ -190,6 +208,7 @@ function getGameStatusStyleText(status: GameStatus): [string, string] {
 }
 
 const router = useRouter();
+const addGameOpen = ref(false);
 
 const searchQuery = ref("");
 
@@ -244,8 +263,8 @@ async function calculateGamesLogic(clearAll = false, forceRefresh = false) {
   ].filter((v, i, a) => a.indexOf(v) === i);
 
   for (const game of allGames) {
-    if (games[game.id]) continue;
-    games[game.id] = await useGame(game.id);
+    if (!games[game.id]) games[game.id] = await useGame(game.id);
+    games[game.id]!.game = game;
   }
 
   const libraryCollection = {
@@ -295,14 +314,18 @@ await new Promise<void>((r) => {
 const navigation = computed(() =>
   collections.value.map((collection) => {
     const items = collection.entries.map(({ game }) => {
-      const status = games[game.id].status;
+      const status = games[game.id]!.status;
 
       const isInstalled = computed(() => status.value.type != "Remote");
 
       const item = {
         label: game.mName,
-        route: `/library/${game.id}`,
-        prefix: `/library/${game.id}`,
+        route: game.id.startsWith("local-")
+          ? `/library/local/${game.id}`
+          : `/library/${game.id}`,
+        prefix: game.id.startsWith("local-")
+          ? `/library/local/${game.id}`
+          : `/library/${game.id}`,
         icon: game.mIconObjectId,
         isInstalled,
         id: game.id,
@@ -323,7 +346,7 @@ const navigation = computed(() =>
 
 const route = useRoute();
 const currentNavigation = computed(() => {
-  return route.path.slice("/library/".length);
+  return route.path.replace(/^\/library\/(?:local\/)?/, "");
 });
 
 const filteredNavigation = computed(() => {
@@ -339,11 +362,17 @@ const filteredNavigation = computed(() => {
 });
 
 const unlistenLibrary = await listen("update_library", async (event) => {
-  console.log("Updating library");
-  let oldNavigation = currentNavigation.value;
+  const selected = currentNavigation.value;
   await calculateGames(false, true);
-  if (oldNavigation !== currentNavigation.value) {
-    router.push("/library");
+  // Refreshes must not undo navigation to a game that was just added.
+  if (
+    selected &&
+    selected === currentNavigation.value &&
+    !navigation.value.some((category) =>
+      category.items.some((item) => item.id === selected),
+    )
+  ) {
+    await router.replace("/library");
   }
 });
 onUnmounted(unlistenLibrary);

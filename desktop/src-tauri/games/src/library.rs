@@ -128,6 +128,11 @@ pub fn set_partially_installed_db(
 pub fn uninstall_game_logic(meta: DownloadableMetadata, app_handle: &AppHandle) {
     debug!("triggered uninstall for agent");
     let mut db_handle = borrow_db_mut_checked();
+    // Imported folders must never enter the server-managed deletion path.
+    if db_handle.applications.local_games.contains_key(&meta.id) {
+        warn!("refusing server uninstall for a local game");
+        return;
+    }
     db_handle
         .applications
         .transient_statuses

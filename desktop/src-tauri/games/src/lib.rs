@@ -4,5 +4,6 @@
 pub mod collections;
 pub mod downloads;
 pub mod library;
+pub mod local;
 pub mod scan;
 pub mod state;

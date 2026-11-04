@@ -18,6 +18,9 @@ pub async fn download_game(
     install_dir: usize,
     enable_updates: bool,
 ) -> Result<(), ApplicationDownloadError> {
+    if borrow_db_checked().applications.local_games.contains_key(&game_id) {
+        return Err(ApplicationDownloadError::Archive("Local games are not downloaded from the Drop server.".into()));
+    }
     let sender = { DOWNLOAD_MANAGER.get_sender().clone() };
 
     let meta = DownloadableMetadata {
@@ -69,6 +72,9 @@ pub async fn download_game(
 
 #[tauri::command]
 pub async fn resume_download(game_id: String) -> Result<(), ApplicationDownloadError> {
+    if borrow_db_checked().applications.local_games.contains_key(&game_id) {
+        return Err(ApplicationDownloadError::Archive("Resume this archive from its local game page.".into()));
+    }
     let (meta, (install_dir, configuration)) = {
         let db_lock = borrow_db_checked();
         let status = db_lock

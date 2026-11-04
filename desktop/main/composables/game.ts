@@ -8,8 +8,9 @@ import type {
   RawGameStatus,
 } from "~/types";
 
-const gameRegistry: { [key: string]: { game: Game; version: Ref<GameVersion | undefined> } } =
-  {};
+const gameRegistry: {
+  [key: string]: { game: Game; version: Ref<GameVersion | undefined> };
+} = {};
 
 const gameStatusRegistry: { [key: string]: Ref<GameStatus> } = {};
 
@@ -42,7 +43,7 @@ export const useGame = async (gameId: string) => {
           status: RawGameStatus;
           version?: GameVersion;
         } = event.payload as any;
-        gameStatusRegistry[gameId].value = parseStatus(payload.status);
+        gameStatusRegistry[gameId]!.value = parseStatus(payload.status);
 
         /**
          * I am not super happy about this.
@@ -52,14 +53,14 @@ export const useGame = async (gameId: string) => {
          * on transient state updates.
          */
         if (payload.version) {
-          gameRegistry[gameId].version.value = payload.version;
+          gameRegistry[gameId]!.version.value = payload.version;
         }
       });
     }
   }
 
-  const game = gameRegistry[gameId];
-  const status = gameStatusRegistry[gameId];
+  const game = gameRegistry[gameId]!;
+  const status = gameStatusRegistry[gameId]!;
   return { ...game, status };
 };
 

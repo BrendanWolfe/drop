@@ -55,7 +55,7 @@ export type GameVersion = {
     launchTemplate: string;
     overrideProtonPath: string;
     overrideHandler: string | undefined;
-    enableUpdates: boolean
+    enableUpdates: boolean;
   };
   setups: Array<{ platform: string }>;
   launches: Array<{ platform: string }>;
@@ -75,6 +75,7 @@ export type EmptyGameStatusEnum =
   | "Queued"
   | "Downloading"
   | "Validating"
+  | "Extracting"
   | "Updating"
   | "Uninstalling"
   | "Running";
@@ -122,4 +123,29 @@ export type Settings = {
   maxDownloadThreads: number;
   maxDownloadSpeed: number;
   forceOffline: boolean;
+};
+
+export type LocalGame = {
+  id: string;
+  name: string;
+  root: string;
+  launcher: string | null;
+  arguments: string;
+  workingDirectory: string;
+  platform: "Windows" | "Linux" | "macOS";
+  playtimeSeconds: number;
+  archive: null | {
+    url: string;
+    archivePath: string;
+    state:
+      | "Incomplete"
+      | "Downloading"
+      | "Extracting"
+      | "NeedsLauncher"
+      | "Ready"
+      | "Error";
+    downloaded: boolean;
+    extracted: boolean;
+    error: string | null;
+  };
 };

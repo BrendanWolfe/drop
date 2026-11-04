@@ -6,7 +6,7 @@ use std::{
 
 use database::DownloadableMetadata;
 use log::{debug, info, warn};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::async_runtime::JoinHandle;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::error::SendError;
@@ -53,7 +53,7 @@ pub enum DownloadManagerSignal {
     UpdateUIDownloadStats(usize, usize), //kb/s and seconds
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum DownloadManagerStatus {
     Downloading,
     Paused,
@@ -70,11 +70,12 @@ impl Serialize for DownloadManagerStatus {
     }
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum DownloadStatus {
     Queued,
     Downloading,
     Validating,
+    Extracting,
     Error,
 }
 

@@ -1409,6 +1409,7 @@ dependencies = [
  "deranged 0.4.0",
  "dirs 6.0.0",
  "download_manager",
+ "dunce",
  "filetime",
  "futures-core",
  "futures-lite",
@@ -1464,6 +1465,7 @@ dependencies = [
  "urlencoding",
  "utils",
  "uuid",
+ "vcpkg",
  "walkdir",
  "webbrowser",
  "whoami",
@@ -1973,6 +1975,7 @@ dependencies = [
  "droplet_types",
  "futures-util",
  "hex 0.4.3",
+ "libarchive-drop",
  "log",
  "pot",
  "rayon",
@@ -1988,6 +1991,7 @@ dependencies = [
  "throttle_my_fn",
  "tokio",
  "tokio-util",
+ "url",
  "utils",
 ]
 
@@ -3143,6 +3147,24 @@ dependencies = [
  "gtk-sys",
  "libloading",
  "once_cell",
+]
+
+[[package]]
+name = "libarchive-drop"
+version = "0.1.1"
+dependencies = [
+ "libarchive3-sys",
+ "libc",
+]
+
+[[package]]
+name = "libarchive3-sys"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cd3beae8f59a4c7a806523269b5392037577c150446e88d684dfa6de6031ca7"
+dependencies = [
+ "libc",
+ "pkg-config",
 ]
 
 [[package]]
@@ -4615,6 +4637,7 @@ dependencies = [
  "shell-words",
  "tauri",
  "tauri-plugin-opener",
+ "tempfile",
  "utils",
 ]
 

@@ -42,6 +42,7 @@ pub enum ApplicationDownloadError {
     IoError(Arc<io::Error>),
     DownloadError(RemoteAccessError),
     InvalidCommand,
+    Archive(String),
 }
 
 impl Display for ApplicationDownloadError {
@@ -69,6 +70,7 @@ impl Display for ApplicationDownloadError {
                 write!(f, "Download failed with error {error:?}")
             }
             ApplicationDownloadError::InvalidCommand => write!(f, "Invalid command state"),
+            ApplicationDownloadError::Archive(message) => write!(f, "{message}"),
         }
     }
 }

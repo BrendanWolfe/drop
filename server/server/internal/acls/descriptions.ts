@@ -48,6 +48,7 @@ export const userACLDescriptions: ObjectFromList<typeof userACLs> = {
 };
 
 export const systemACLDescriptions: ObjectFromList<typeof systemACLs> = {
+  "downloads:read": "View active game downloads, users, devices, and reported transfer speeds.",
   setup:
     "All permissions required to setup a new Drop instance (setup wizard).",
 

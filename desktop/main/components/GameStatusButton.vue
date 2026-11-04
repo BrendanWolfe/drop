@@ -211,6 +211,8 @@ const styles: { [key in EmptyGameStatusEnum]: string } = {
     "bg-zinc-800 text-white hover:bg-zinc-700 focus-visible:outline-zinc-700 hover:bg-zinc-700",
   Validating:
     "bg-zinc-800 text-white hover:bg-zinc-700 focus-visible:outline-zinc-700 hover:bg-zinc-700",
+  Extracting:
+    "bg-zinc-800 text-white hover:bg-zinc-700 focus-visible:outline-zinc-700",
   Updating:
     "bg-zinc-800 text-white hover:bg-zinc-700 focus-visible:outline-zinc-700 hover:bg-zinc-700",
   Uninstalling:
@@ -224,6 +226,7 @@ const buttonNames: { [key in EmptyGameStatusEnum]: string } = {
   Queued: "Queued",
   Downloading: "Downloading",
   Validating: "Validating",
+  Extracting: "Extracting",
   Updating: "Updating",
   Uninstalling: "Uninstalling",
   Running: "Stop",
@@ -234,6 +237,7 @@ const buttonIcons: { [key in EmptyGameStatusEnum]: Component } = {
   Queued: QueueListIcon,
   Downloading: ArrowDownTrayIcon,
   Validating: ServerIcon,
+  Extracting: ServerIcon,
   Updating: ArrowDownTrayIcon,
   Uninstalling: TrashIcon,
   Running: StopIcon,
@@ -244,6 +248,7 @@ const buttonActions: { [key in EmptyGameStatusEnum]: () => void } = {
   Queued: () => emit("queue"),
   Downloading: () => emit("queue"),
   Validating: () => emit("queue"),
+  Extracting: () => emit("queue"),
   Updating: () => emit("queue"),
   Uninstalling: () => {},
   Running: () => emit("kill"),

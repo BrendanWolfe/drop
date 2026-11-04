@@ -66,6 +66,8 @@ mod games;
 mod process;
 mod remote;
 mod logging;
+mod local_games;
+mod download_reporting;
 mod scheduler;
 mod settings;
 mod updates;
@@ -74,6 +76,7 @@ use client::*;
 use download_manager::*;
 use downloads::*;
 use games::*;
+use local_games::*;
 use process::*;
 use remote::*;
 use settings::*;
@@ -114,6 +117,7 @@ async fn setup(handle: AppHandle) -> AppState {
     ProcessManagerWrapper::init(handle.clone());
     ::remote::proxy::initialize();
     DownloadManagerWrapper::init(handle.clone());
+    download_reporting::start(&handle);
 
     debug!("checking if database is set up");
     let is_set_up = DB.database_is_set_up();
@@ -128,6 +132,7 @@ async fn setup(handle: AppHandle) -> AppState {
     };
 
     scan_install_dirs();
+    ::games::local::reset_interrupted(&mut borrow_db_mut_checked());
 
     if !is_set_up {
         return AppState {
@@ -148,6 +153,9 @@ async fn setup(handle: AppHandle) -> AppState {
     drop(db_handle);
 
     for (game_id, status) in statuses {
+        if borrow_db_checked().applications.local_games.contains_key(&game_id) {
+            continue;
+        }
         match status {
             GameDownloadStatus::Remote {} => {}
             GameDownloadStatus::Installed { install_dir, .. } => {
@@ -258,6 +266,12 @@ pub fn run() {
             fetch_game_status,
             fetch_game_version_options,
             update_game_configuration,
+            save_local_game,
+            fetch_local_game,
+            remove_local_game,
+            find_local_launchers,
+            download_archive,
+            resume_archive,
             // Downloads
             download_game,
             resume_download,

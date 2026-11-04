@@ -32,7 +32,7 @@ pub async fn fetch_library(
     app_handle: AppHandle,
     hard_refresh: Option<bool>,
 ) -> Result<FetchLibraryResponse, RemoteAccessError> {
-    offline!(
+    let result = offline!(
         state,
         fetch_library_logic,
         fetch_library_logic_offline,
@@ -40,7 +40,20 @@ pub async fn fetch_library(
         app_handle,
         hard_refresh
     )
-    .await
+    .await;
+    let local = {
+        let db = borrow_db_checked();
+        db.applications.local_games.values().map(::games::local::as_game).collect::<Vec<_>>()
+    };
+    let mut response = match result {
+        Ok(response) => response,
+        Err(_) if !local.is_empty() => FetchLibraryResponse {
+            library: vec![], collections: vec![], other: vec![], missing: vec![],
+        },
+        Err(error) => return Err(error),
+    };
+    response.library.extend(local);
+    Ok(response)
 }
 
 #[derive(Encode, Decode, Serialize)]
@@ -53,7 +66,7 @@ pub struct FetchLibraryResponse {
 
 pub async fn fetch_library_logic(
     state: tauri::State<'_, Mutex<AppState>>,
-    app_handle: AppHandle,
+    _app_handle: AppHandle,
     hard_fresh: Option<bool>,
 ) -> Result<FetchLibraryResponse, RemoteAccessError> {
     let do_hard_refresh = hard_fresh.unwrap_or(false);
@@ -114,6 +127,9 @@ pub async fn fetch_library_logic(
     let mut other = Vec::new();
     let mut missing = Vec::new();
     for meta in installed_metas {
+        if borrow_db_checked().applications.local_games.contains_key(&meta.id) {
+            continue;
+        }
         if all_games.iter().any(|e| *e.id() == meta.id) {
             continue;
         }
@@ -126,11 +142,8 @@ pub async fn fetch_library_logic(
                     "{} is installed, but encountered error fetching its error: {}.",
                     meta.id, err
                 );
-                /*
-                 * We can't return a dummy object here because it needs to be in the cache to work
-                 * So we uninstall the game so we don't "lose" it
-                 */
-                uninstall_game_logic(meta.clone(), &app_handle);
+                // Missing metadata must never delete an installation. The cache
+                // can be rebuilt later; the user's files cannot.
                 continue;
             }
         };
@@ -286,6 +299,9 @@ pub async fn fetch_game_version_options_logic(
     game_id: String,
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<Vec<VersionDownloadOption>, RemoteAccessError> {
+    if borrow_db_checked().applications.local_games.contains_key(&game_id) {
+        return Ok(vec![]);
+    }
     let client = DROP_CLIENT_ASYNC.clone();
 
     let previous_id = borrow_db_checked()
@@ -353,6 +369,14 @@ pub async fn fetch_game(
     game_id: String,
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<FetchGameStruct, RemoteAccessError> {
+    {
+        let db = borrow_db_checked();
+        if let Some(local) = db.applications.local_games.get(&game_id) {
+            return Ok(FetchGameStruct::new(::games::local::as_game(local),
+                GameStatusManager::fetch_state(&game_id, &db),
+                db.applications.game_versions.get(&game_id).cloned()));
+        }
+    }
     offline!(
         state,
         fetch_game_logic,
@@ -371,6 +395,9 @@ pub fn fetch_game_status(id: String) -> GameStatusWithTransient {
 
 #[tauri::command]
 pub fn uninstall_game(game_id: String, app_handle: AppHandle) -> Result<(), LibraryError> {
+    if borrow_db_checked().applications.local_games.contains_key(&game_id) {
+        return Err(LibraryError::MetaNotFound(game_id));
+    }
     let meta = match get_current_meta(&game_id) {
         Some(data) => data,
         None => return Err(LibraryError::MetaNotFound(game_id)),
@@ -392,13 +419,14 @@ pub async fn fetch_game_version_options(
 pub fn update_game_configuration(
     game_id: String,
     options: UserConfiguration,
+    app_handle: AppHandle,
 ) -> Result<(), LibraryError> {
     let mut handle = borrow_db_mut_checked();
     let installed_version = handle
         .applications
         .installed_game_version
         .get(&game_id)
-        .ok_or(LibraryError::MetaNotFound(game_id))?;
+        .ok_or_else(|| LibraryError::MetaNotFound(game_id.clone()))?;
 
     let _id = installed_version.id.clone();
     let version = installed_version.version.clone();
@@ -411,11 +439,16 @@ pub fn update_game_configuration(
         .clone();
 
     existing_configuration.user_configuration = options;
+    if handle.applications.local_games.contains_key(&game_id) {
+        existing_configuration.user_configuration.enable_updates = false;
+    }
 
     handle
         .applications
         .game_versions
-        .insert(version.to_string(), existing_configuration);
+        .insert(version.to_string(), existing_configuration.clone());
+    games::library::push_game_update(&app_handle, &game_id, Some(existing_configuration),
+        GameStatusManager::fetch_state(&game_id, &handle));
 
     Ok(())
 }

@@ -28,6 +28,14 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "deb", "rpm", "dmg"],
+    "linux": {
+      "deb": {
+        "depends": ["libarchive13 (>= 3.4) | libarchive13t64 (>= 3.4)"]
+      },
+      "rpm": {
+        "depends": ["libarchive >= 3.4"]
+      }
+    },
     "windows": {
       "nsis": {
         "installMode": "both"

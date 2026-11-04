@@ -21,6 +21,10 @@ pub mod data {
     pub type DownloadType = v1::DownloadType;
     pub type DatabaseApplications = v1::DatabaseApplications;
     pub type UserConfiguration = v1::UserConfiguration;
+    pub type LocalGame = v1::LocalGame;
+    pub type ArchiveInstall = v1::ArchiveInstall;
+    pub type ArchiveState = v1::ArchiveState;
+    pub type LaunchConfiguration = v1::LaunchConfiguration;
 
     use std::collections::HashMap;
 
@@ -39,6 +43,7 @@ pub mod data {
     #[derive(Serialize, Deserialize)]
     enum DatabaseVersionEnum {
         V0_4_0 { database: v1::Database },
+        V0_4_4 { database: v1::Database },
     }
 
     pub struct DatabaseVersionSerializable(pub(crate) Database);
@@ -48,11 +53,15 @@ pub mod data {
         where
             S: serde::Serializer,
         {
-            // Always serialize to latest version
-            DatabaseVersionEnum::V0_4_0 {
-                database: self.0.clone(),
-            }
-            .serialize(serializer)
+            // Older clients automatically uninstall entries whose server cache
+            // is missing. Do not let them interpret local folder registrations
+            // as server installations: use a new format tag when locals exist.
+            let version = if self.0.applications.local_games.is_empty() {
+                DatabaseVersionEnum::V0_4_0 { database: self.0.clone() }
+            } else {
+                DatabaseVersionEnum::V0_4_4 { database: self.0.clone() }
+            };
+            version.serialize(serializer)
         }
     }
 
@@ -62,7 +71,7 @@ pub mod data {
             D: serde::Deserializer<'de>,
         {
             Ok(match DatabaseVersionEnum::deserialize(deserializer)? {
-                DatabaseVersionEnum::V0_4_0 { database } => DatabaseVersionSerializable(database),
+                DatabaseVersionEnum::V0_4_0 { database } | DatabaseVersionEnum::V0_4_4 { database } => DatabaseVersionSerializable(database),
             })
         }
     }
@@ -152,6 +161,49 @@ pub mod data {
             pub platform: Platform,
         }
 
+        /// Device-local entries are authoritative here, never in the server cache.
+        #[derive(Serialize, Deserialize, Clone, Debug)]
+        #[serde(rename_all = "camelCase")]
+        pub struct LocalGame {
+            pub id: String,
+            pub name: String,
+            pub root: PathBuf,
+            pub launcher: Option<PathBuf>,
+            pub arguments: String,
+            pub working_directory: PathBuf,
+            pub platform: Platform,
+            pub playtime_seconds: u64,
+            pub archive: Option<ArchiveInstall>,
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+        pub enum ArchiveState {
+            Incomplete,
+            Downloading,
+            Extracting,
+            NeedsLauncher,
+            Ready,
+            Error,
+        }
+
+        #[derive(Serialize, Deserialize, Clone)]
+        #[serde(rename_all = "camelCase")]
+        pub struct ArchiveInstall {
+            pub url: String,
+            pub archive_path: PathBuf,
+            pub validator: Option<String>,
+            pub downloaded: bool,
+            pub extracted: bool,
+            pub state: ArchiveState,
+            pub error: Option<String>,
+        }
+
+        impl std::fmt::Debug for ArchiveInstall {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_struct("ArchiveInstall").field("state", &self.state).finish_non_exhaustive()
+            }
+        }
+
         #[derive(Serialize, Deserialize, Clone, Debug)]
         #[serde(rename_all = "camelCase")]
         pub struct Settings {
@@ -204,6 +256,7 @@ pub mod data {
             Uninstalling {},
             Updating { version_id: String },
             Validating { version_id: String },
+            Extracting { version_id: String },
             Running {},
         }
 
@@ -254,6 +307,8 @@ pub mod data {
         #[serde(rename_all = "camelCase")]
         pub struct DatabaseApplications {
             pub install_dirs: Vec<PathBuf>,
+            #[serde(default)]
+            pub local_games: HashMap<String, LocalGame>,
             // Guaranteed to exist if the game also exists in the app state map
             pub game_statuses: HashMap<String, GameDownloadStatus>,
 
@@ -298,6 +353,7 @@ pub mod data {
                 proxy_auth_cleanup: Default::default(),
                 applications: DatabaseApplications {
                     install_dirs: vec![games_base_dir.into()],
+                    local_games: HashMap::new(),
                     game_statuses: HashMap::new(),
                     game_versions: HashMap::new(),
                     installed_game_version: HashMap::new(),
@@ -357,6 +413,36 @@ pub mod data {
         #[test]
         fn settings_default_speed_is_unlimited() {
             assert_eq!(Settings::default().max_download_speed, 0);
+        }
+
+        #[test]
+        fn older_databases_default_to_an_empty_local_library() {
+            let database = Database::new("games", None, "cache".into());
+            let encoded = ron::to_string(&database).unwrap();
+            let legacy = encoded.replace("localGames:{},", "");
+            assert_ne!(legacy, encoded);
+            let decoded: Database = ron::from_str(&legacy).unwrap();
+            assert!(decoded.applications.local_games.is_empty());
+        }
+
+        #[test]
+        fn local_folders_use_a_format_older_clients_cannot_uninstall() {
+            use super::{DatabaseVersionSerializable, LocalGame};
+            use crate::platform::Platform;
+            let mut database = Database::new("games", None, "cache".into());
+            let legacy = ron::to_string(&DatabaseVersionSerializable(database.clone())).unwrap();
+            assert!(legacy.starts_with("V0_4_0("));
+            let _: DatabaseVersionSerializable = ron::from_str(&legacy).unwrap();
+            database.applications.local_games.insert("local-test".into(), LocalGame {
+                id: "local-test".into(), name: "My game".into(), root: "games/test".into(),
+                launcher: Some("games/test/play.exe".into()), arguments: String::new(),
+                working_directory: "games/test".into(), platform: Platform::Windows,
+                playtime_seconds: 123, archive: None,
+            });
+            let encoded = ron::to_string(&DatabaseVersionSerializable(database)).unwrap();
+            assert!(encoded.starts_with("V0_4_4("));
+            let decoded: DatabaseVersionSerializable = ron::from_str(&encoded).unwrap();
+            assert_eq!(decoded.0.applications.local_games["local-test"].playtime_seconds, 123);
         }
 
         #[test]

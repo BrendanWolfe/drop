@@ -2,6 +2,9 @@
 
 The official desktop client for Drop.
 
+See [Local games and archive downloads](LOCAL_GAMES.md) for usage, supported
+formats, download-monitoring behavior, and native build dependencies.
+
 ## Releases
 
 This fork builds desktop installers for Windows x64 and Linux x64/ARM64 only.

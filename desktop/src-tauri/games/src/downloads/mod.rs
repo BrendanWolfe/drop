@@ -1,4 +1,6 @@
 pub mod download_agent;
+pub mod archive;
+pub mod extract;
 mod download_logic;
 pub mod drop_data;
 pub mod error;

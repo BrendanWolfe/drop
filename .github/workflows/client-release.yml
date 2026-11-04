@@ -57,6 +57,18 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile --filter drop-app... --filter my-nuxt-layer...
 
+      - name: Install Windows archive libraries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install "libarchive[core,bzip2,lz4,lzma,zstd]:x64-windows-static-md"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          "VCPKGRS_TRIPLET=x64-windows-static-md" >> $env:GITHUB_ENV
+          "LIBARCHIVE_STATIC=1" >> $env:GITHUB_ENV
+          "LIBARCHIVE_LIB_DIR=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md/lib" >> $env:GITHUB_ENV
+          "LIBARCHIVE_INCLUDE_DIR=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md/include" >> $env:GITHUB_ENV
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

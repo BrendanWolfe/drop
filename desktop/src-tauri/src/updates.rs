@@ -69,7 +69,7 @@ impl ScheduleTask for GameUpdater {
                     v.and_then(|version_id| db_lock.applications.game_versions.get(version_id))
                 })
                 .filter(|v| {
-                    v.map(|v| v.user_configuration.enable_updates)
+                    v.map(|v| v.user_configuration.enable_updates && !db_lock.applications.local_games.contains_key(&v.game_id))
                         .unwrap_or(false)
                 })
                 .map(|v| v.cloned().unwrap())

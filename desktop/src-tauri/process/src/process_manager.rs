@@ -207,6 +207,11 @@ impl ProcessManager<'_> {
         );
 
         let elapsed_seconds = elapsed.as_secs();
+        if let Some(local) = db_handle.applications.local_games.get_mut(&game_id) {
+            local.playtime_seconds = local.playtime_seconds.saturating_add(elapsed_seconds);
+            let _ = self.app_handle.emit("update_local_game", &game_id);
+            return Ok(());
+        }
         if elapsed_seconds > 2 {
             let playtime_game_id = game_id.clone();
             tauri::async_runtime::spawn(async move {
@@ -365,6 +370,11 @@ impl ProcessManager<'_> {
             .game_versions
             .get(version_name)
             .ok_or(ProcessError::InvalidVersion)?;
+
+        if let Some(local) = db_lock.applications.local_games.get(&game_id)
+            && !local.launcher.as_ref().is_some_and(|path| path.is_file()) {
+            return Err(ProcessError::InvalidArguments("Launcher missing. Choose a new launcher in game settings.".into()));
+        }
 
         let game_log_folder = &self.get_log_dir(game_id);
         create_dir_all(game_log_folder)?;
@@ -525,10 +535,14 @@ impl ProcessManager<'_> {
             .map_err(|e| ProcessError::FormatError(e.to_string()))?
             .to_string();
 
-        let target_launch_string = SimpleCurlyFormat
+        let target_launch_string = if db_lock.applications.local_games.contains_key(&meta.id) {
+            // A selected filename/argument is literal, not a server command
+            // template. Preserve braces in paths such as "Game {Deluxe}".
+            target_launch_string
+        } else { SimpleCurlyFormat
             .format(&target_launch_string, format_args)
             .map_err(|e| ProcessError::FormatError(e.to_string()))?
-            .to_string();
+            .to_string() };
 
         let launch_parameters = LaunchParameters(
             ParsedCommand::parse(target_launch_string)?,
@@ -556,7 +570,9 @@ impl ProcessManager<'_> {
         // sets the working directory to the executable's folder. Executables that
         // live outside the install dir (emulators) or directly at its root keep the
         // install dir, so existing behaviour is unchanged for them.
-        let launch_working_dir = {
+        let launch_working_dir = if let Some(local) = db_lock.applications.local_games.get(&meta.id) {
+            local.working_directory.clone()
+        } else {
             let command_path = std::path::Path::new(&launch_parameters.0.command);
             let install_dir = &launch_parameters.1;
             match command_path.parent() {

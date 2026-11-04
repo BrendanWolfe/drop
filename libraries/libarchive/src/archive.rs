@@ -6,6 +6,12 @@ use std::str;
 use error::ErrCode;
 use libarchive3_sys::ffi;
 
+// The older sys crate omits this stable libarchive API. Prefer UTF-8 explicitly
+// rather than interpreting Windows' current-codepage filenames as UTF-8.
+extern "C" {
+    fn archive_entry_pathname_utf8(entry: *mut ffi::Struct_archive_entry) -> *const libc::c_char;
+}
+
 pub enum ReadCompression {
     All,
     Bzip2,
@@ -122,6 +128,21 @@ pub trait Handle {
 
 pub trait Entry {
     unsafe fn entry(&self) -> *mut ffi::Struct_archive_entry;
+
+    fn pathname_checked(&self) -> Result<&str, str::Utf8Error> {
+        let pointer = unsafe { archive_entry_pathname_utf8(self.entry()) };
+        if pointer.is_null() { return Ok(""); }
+        let path = unsafe { CStr::from_ptr(pointer) };
+        str::from_utf8(path.to_bytes())
+    }
+
+    fn has_hardlink(&self) -> bool {
+        unsafe { !ffi::archive_entry_hardlink(self.entry()).is_null() }
+    }
+
+    fn permissions(&self) -> u32 {
+        unsafe { ffi::archive_entry_perm(self.entry()) as u32 }
+    }
 
     fn filetype(&self) -> FileType {
         unsafe {
