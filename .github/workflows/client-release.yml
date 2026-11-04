@@ -69,6 +69,10 @@ jobs:
           "LIBARCHIVE_LIB_DIR=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md/lib" >> $env:GITHUB_ENV
           "LIBARCHIVE_INCLUDE_DIR=$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md/include" >> $env:GITHUB_ENV
 
+      - name: Test Steam shortcut file safety
+        working-directory: desktop/src-tauri
+        run: cargo test --locked -p steam_shortcuts
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

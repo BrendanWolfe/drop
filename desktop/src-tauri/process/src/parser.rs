@@ -123,8 +123,6 @@ impl ParsedCommand {
     }
 }
 
-pub struct LaunchParameters(pub ParsedCommand, pub PathBuf);
-
 fn environment_assignment(value: &str) -> bool {
     let Some((name, _)) = value.split_once('=') else {
         return false;

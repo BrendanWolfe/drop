@@ -25,6 +25,7 @@ pub mod data {
     pub type ArchiveInstall = v1::ArchiveInstall;
     pub type ArchiveState = v1::ArchiveState;
     pub type LaunchConfiguration = v1::LaunchConfiguration;
+    pub type LaunchConfigurationEmulator = v1::LaunchConfigurationEmulator;
 
     use std::collections::HashMap;
 
@@ -324,6 +325,10 @@ pub mod data {
 
         #[derive(Serialize, Deserialize, Clone, Default)]
         pub struct Database {
+            #[serde(default)]
+            pub steam_registrations: HashMap<String, steam_shortcuts::Registration>,
+            #[serde(default)]
+            pub steam_profile: Option<String>,
             /// Header names only. Values live in the OS credential store, never this database.
             #[serde(default)]
             pub proxy_auth: HashMap<String, Vec<String>>,
@@ -350,6 +355,8 @@ pub mod data {
         ) -> Self {
             Self {
                 proxy_auth: HashMap::new(),
+                steam_registrations: HashMap::new(),
+                steam_profile: None,
                 proxy_auth_cleanup: Default::default(),
                 applications: DatabaseApplications {
                     install_dirs: vec![games_base_dir.into()],
@@ -413,6 +420,18 @@ pub mod data {
         #[test]
         fn settings_default_speed_is_unlimited() {
             assert_eq!(Settings::default().max_download_speed, 0);
+        }
+
+        #[test]
+        fn steam_registrations_persist_and_legacy_databases_default_to_none() {
+            let mut database=Database::new("games",None,"cache".into());
+            let encoded=ron::to_string(&database).unwrap();
+            let legacy=encoded.replace("steam_registrations:{},", "").replace("steam_profile:None,", "");
+            assert_ne!(encoded,legacy); let decoded:Database=ron::from_str(&legacy).unwrap(); assert!(decoded.steam_registrations.is_empty()); assert!(decoded.steam_profile.is_none());
+            let reg=steam_shortcuts::Registration { key:"key".into(),game_id:"game".into(),source:"instance".into(),steam_root:"steam".into(),profile_id:"42".into(),app_id:0xdeadbeef,game_id64:steam_shortcuts::game_id(0xdeadbeef),ownership_token:"token".into(),exported:steam_shortcuts::ExportedLaunch { executable:"play.exe".into(),arguments:vec!["Player One".into()],working_directory:"game".into(),launch_id:"play".into(),configuration:"{}".into() },exported_name:"Game".into(),prefer_steam:true };
+            database.steam_registrations.insert("key".into(),reg); database.steam_profile=Some("profile".into());
+            let decoded:Database=ron::from_str(&ron::to_string(&database).unwrap()).unwrap();
+            assert!(decoded.steam_registrations["key"].prefer_steam); assert_eq!(decoded.steam_registrations["key"].game_id64,steam_shortcuts::game_id(0xdeadbeef));
         }
 
         #[test]

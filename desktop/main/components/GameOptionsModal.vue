@@ -36,6 +36,26 @@
             :proton-enabled="protonEnabled"
             :game-id="props.gameId"
           />
+          <div
+            v-if="steamContext?.supported"
+            class="mt-6 border-t border-zinc-800 pt-4"
+          >
+            <label class="flex items-center gap-3 text-sm text-zinc-200">
+              <input
+                v-model="preferSteam"
+                type="checkbox"
+                :disabled="!steamContext.registration"
+              />
+              Always launch through Steam
+            </label>
+            <p class="mt-2 text-xs text-zinc-500">
+              {{
+                steamContext.registration
+                  ? "Direct Drop launching remains available. Steam launches are not tracked by Drop. Changed launch settings require an explicit Steam shortcut update."
+                  : "Add this game using its Steam options first."
+              }}
+            </p>
+          </div>
         </div>
       </div>
       <div v-if="saveError" class="mt-5 rounded-md bg-red-600/10 p-4">
@@ -84,12 +104,26 @@ import Updates from "./GameOptions/Updates.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowPathIcon } from "@heroicons/vue/24/solid";
 import type { GameVersion } from "~/types";
+import type { SteamContext } from "~/types/steam";
+import { platform } from "@tauri-apps/plugin-os";
 
 const appState = useAppState();
 
 const open = defineModel<boolean>();
 const props = defineProps<{ gameId: string; local?: boolean }>();
 const game = await useGame(props.gameId);
+const steamContext = ref<SteamContext>();
+const preferSteam = ref(false);
+if (platform() === "windows") {
+  try {
+    steamContext.value = await invoke<SteamContext>("steam_context", {
+      id: props.gameId,
+    });
+    preferSteam.value = steamContext.value.registration?.preferSteam ?? false;
+  } catch {
+    /* Steam discovery must not block ordinary launch settings. */
+  }
+}
 
 const configuration: Ref<GameVersion["userConfiguration"]> = ref(
   game.version.value!.userConfiguration,
@@ -132,6 +166,11 @@ async function save() {
       gameId: game.game.id,
       options: configuration.value,
     });
+    if (steamContext.value?.registration)
+      await invoke("steam_prefer", {
+        id: props.gameId,
+        prefer: preferSteam.value,
+      });
     open.value = false;
     saveError.value = undefined;
   } catch (e) {

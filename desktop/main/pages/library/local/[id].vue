@@ -30,7 +30,7 @@
         v-else-if="ready"
         class="primary-button"
         :disabled="busy"
-        @click="launch"
+        @click="launch()"
       >
         <PlayIcon class="size-5" />Play
       </button>
@@ -83,6 +83,13 @@
         Remove
       </button>
     </div>
+
+    <SteamActions
+      ref="steamActions"
+      :game-id="id"
+      :game-name="game.name"
+      @direct="launch(true)"
+    />
 
     <p
       v-if="error"
@@ -223,6 +230,7 @@
 </template>
 
 <script setup lang="ts">
+import { requestPreferredSteamLaunch } from "~/utils/steam-launch";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -312,7 +320,33 @@ async function action(command: string, args: Record<string, unknown>) {
     busy.value = false;
   }
 }
-async function launch() {
+const steamActions = ref<{ beforeUninstall: () => Promise<boolean> }>();
+async function launch(direct = false) {
+  if (!direct) {
+    try {
+      if (
+        await requestPreferredSteamLaunch(id, direct, (id) =>
+          invoke<boolean>("steam_launch_preferred", { id }),
+        )
+      ) {
+        error.value = "";
+        createModal(
+          ModalType.Notification,
+          {
+            title: "Launch requested in Steam",
+            description:
+              "Steam received the request. Drop cannot confirm launch, track playtime, or stop this game.",
+            buttonText: "Close",
+          },
+          (e, c) => c(),
+        );
+        return;
+      }
+    } catch (e) {
+      error.value = String(e);
+      return;
+    }
+  }
   await action("launch_game", { id, index: 0 });
 }
 async function saved() {
@@ -320,6 +354,8 @@ async function saved() {
   await refresh();
 }
 async function remove() {
+  if (steamActions.value && !(await steamActions.value.beforeUninstall()))
+    return;
   busy.value = true;
   error.value = "";
   try {

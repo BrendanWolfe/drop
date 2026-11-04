@@ -5,6 +5,9 @@ The official desktop client for Drop.
 See [Local games and archive downloads](LOCAL_GAMES.md) for usage, supported
 formats, download-monitoring behavior, and native build dependencies.
 
+See [Steam integration on Windows](STEAM_INTEGRATION.md) for non-Steam shortcuts,
+launch preferences, safe updates, deferred cleanup and launch limitations.
+
 ## Releases
 
 This fork builds desktop installers for Windows x64 and Linux x64/ARM64 only.

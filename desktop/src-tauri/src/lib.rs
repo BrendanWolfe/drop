@@ -67,6 +67,7 @@ mod process;
 mod remote;
 mod logging;
 mod local_games;
+mod steam;
 mod download_reporting;
 mod scheduler;
 mod settings;
@@ -267,6 +268,13 @@ pub fn run() {
             fetch_game_version_options,
             update_game_configuration,
             save_local_game,
+            steam::steam_context,
+            steam::steam_save,
+            steam::steam_remove,
+            steam::steam_prefer,
+            steam::steam_play,
+            steam::steam_launch_preferred,
+            steam::steam_cleanup,
             fetch_local_game,
             remove_local_game,
             find_local_launchers,

@@ -61,6 +61,13 @@ enum WindowsLaunchStrategy {
     Powershell,
 }
 
+/// Direct Steam exports must not disguise an interpreter as a game executable.
+pub fn steam_executable_supported(path: &Path) -> bool {
+    if !path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("exe")) { return false; }
+    let filename = path.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
+    !matches!(filename.as_str(), "cmd.exe" | "powershell.exe" | "pwsh.exe" | "wscript.exe" | "cscript.exe" | "bash.exe" | "sh.exe" | "python.exe" | "pythonw.exe" | "node.exe" | "rundll32.exe" | "mshta.exe")
+}
+
 // Wrap a launch command for Windows; with no strategy, detect it from the file extension.
 fn windows_launch_command(
     launch_command: String,

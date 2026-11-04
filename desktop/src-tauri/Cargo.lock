@@ -1126,6 +1126,7 @@ dependencies = [
  "ron",
  "serde",
  "serde_with",
+ "steam_shortcuts",
  "url",
  "whoami",
 ]
@@ -1395,7 +1396,7 @@ dependencies = [
 
 [[package]]
 name = "drop-app"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1419,6 +1420,7 @@ dependencies = [
  "http 1.4.0",
  "http-serde 2.1.1",
  "humansize",
+ "keyvalues-parser",
  "known-folders",
  "libloading",
  "log",
@@ -1445,6 +1447,7 @@ dependencies = [
  "sha1",
  "shared_child",
  "slice-deque",
+ "steam_shortcuts",
  "sysinfo 0.36.1",
  "tar",
  "tauri",
@@ -1469,6 +1472,7 @@ dependencies = [
  "walkdir",
  "webbrowser",
  "whoami",
+ "winreg 0.55.0",
  "wry",
  "zstd",
 ]
@@ -1835,6 +1839,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -6117,6 +6131,17 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "steam_shortcuts"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "fs2",
+ "serde",
+ "tempfile",
+ "uuid",
+]
 
 [[package]]
 name = "string_cache"

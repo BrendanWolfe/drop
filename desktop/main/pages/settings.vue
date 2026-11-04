@@ -122,6 +122,16 @@ const navigation = computed(() => [
         },
       ]
     : []),
+  ...(platform() === "windows"
+    ? [
+        {
+          label: "Steam",
+          route: "/settings/steam",
+          prefix: "/settings/steam",
+          icon: CubeIcon,
+        },
+      ]
+    : []),
   {
     label: "Account",
     route: "/settings/account",

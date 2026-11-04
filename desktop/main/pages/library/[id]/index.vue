@@ -25,7 +25,13 @@
         <p v-if="game.playtime[0]" class="mt-2 text-sm text-zinc-300">
           Playtime: {{ formatPlaytime(game.playtime[0].seconds) }}
         </p>
-        <div class="relative" v-if="status.type === 'Installed' && status.install_type.type != InstalledType.PartiallyInstalled">
+        <div
+          class="relative"
+          v-if="
+            status.type === 'Installed' &&
+            status.install_type.type != InstalledType.PartiallyInstalled
+          "
+        >
           <div
             v-if="!version?.userConfiguration?.enableUpdates"
             class="absolute mt-1 inline-flex items-center gap-x-1 text-xs text-zinc-400"
@@ -90,6 +96,13 @@
             Store
           </NuxtLink>
         </div>
+        <SteamActions
+          ref="steamActions"
+          class="mt-3"
+          :game-id="game.id"
+          :game-name="game.mName"
+          @direct="launch(true)"
+        />
       </div>
 
       <!-- Main content -->
@@ -648,6 +661,7 @@
 </template>
 
 <script setup lang="ts">
+import { requestPreferredSteamLaunch } from "~/utils/steam-launch";
 import {
   Listbox,
   ListboxButton,
@@ -735,7 +749,11 @@ onMounted(async () => {
   await installFlow();
   if (!installFlowOpen.value) return;
   if (
-    canStartStoreDownload(status?.value, versionOptions.value, installDirs.value)
+    canStartStoreDownload(
+      status?.value,
+      versionOptions.value,
+      installDirs.value,
+    )
   ) {
     installVersionIndex.value = -1;
     installDir.value = 0;
@@ -806,7 +824,45 @@ async function resumeDownload() {
 const launchOptions = ref<Array<{ name: string }> | undefined>(undefined);
 const launchOptionsOpen = computed(() => launchOptions.value !== undefined);
 
-async function launch() {
+const steamActions = ref<{ beforeUninstall: () => Promise<boolean> }>();
+async function launch(direct = false) {
+  if (
+    !direct &&
+    status.value.type === "Installed" &&
+    status.value.install_type.type === InstalledType.Installed
+  ) {
+    try {
+      if (
+        await requestPreferredSteamLaunch(game.id, direct, (id) =>
+          invoke<boolean>("steam_launch_preferred", { id }),
+        )
+      ) {
+        createModal(
+          ModalType.Notification,
+          {
+            title: "Launch requested in Steam",
+            description:
+              "The request was handed to Steam. Drop cannot confirm launch, track playtime, or stop this game.",
+            buttonText: "Close",
+          },
+          (e, c) => c(),
+        );
+        return;
+      }
+    } catch (e) {
+      createModal(
+        ModalType.Notification,
+        {
+          title: "Steam launch unavailable",
+          description:
+            String(e) + " Use Play directly with Drop to launch without Steam.",
+          buttonText: "Close",
+        },
+        (e, c) => c(),
+      );
+      return;
+    }
+  }
   if (
     status.value.type == "Installed" &&
     status.value.install_type.type == InstalledType.SetupRequired
@@ -873,6 +929,8 @@ async function queue() {
 }
 
 async function uninstall() {
+  if (steamActions.value && !(await steamActions.value.beforeUninstall()))
+    return;
   await invoke("uninstall_game", { gameId: game.id });
 }
 

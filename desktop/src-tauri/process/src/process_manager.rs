@@ -14,8 +14,6 @@ use database::{
     borrow_db_checked, borrow_db_mut_checked, db::DATA_ROOT_DIR, models::data::InstalledGameType,
     platform::Platform,
 };
-use dynfmt::Format;
-use dynfmt::SimpleCurlyFormat;
 use games::{library::{push_game_update, report_playtime}, state::GameStatusManager};
 use log::{debug, info, warn};
 use serde::Serialize;
@@ -25,8 +23,7 @@ use tauri::{AppHandle, Emitter as _};
 use crate::{
     PROCESS_MANAGER,
     error::ProcessError,
-    format::DropFormatArgs,
-    parser::{LaunchParameters, ParsedCommand},
+    parser::ParsedCommand,
     process_handlers::{
         AsahiMuvmLauncher, LinuxNativeLauncher, MacLauncher, UMUCompatLauncher, UMUNativeLauncher,
         WindowsCmdLauncher, WindowsDirectLauncher, WindowsLauncher, WindowsPowershellLauncher,
@@ -515,83 +512,19 @@ impl ProcessManager<'_> {
             )?
         };
 
-        let mut parsed_launch = ParsedCommand::parse(target_launch_string.clone())?;
-        let executable_name = parsed_launch.command.clone();
-        parsed_launch.make_absolute(install_dir.into());
-
-        let format_args = DropFormatArgs::new(
-            target_launch_string,
-            install_dir,
-            &executable_name,
-            parsed_launch.command,
-            None,
-        );
-
-        let target_launch_string = SimpleCurlyFormat
-            .format(
-                &game_version.user_configuration.launch_template,
-                &format_args,
-            )
-            .map_err(|e| ProcessError::FormatError(e.to_string()))?
-            .to_string();
-
-        let target_launch_string = if db_lock.applications.local_games.contains_key(&meta.id) {
-            // A selected filename/argument is literal, not a server command
-            // template. Preserve braces in paths such as "Game {Deluxe}".
-            target_launch_string
-        } else { SimpleCurlyFormat
-            .format(&target_launch_string, format_args)
-            .map_err(|e| ProcessError::FormatError(e.to_string()))?
-            .to_string() };
-
-        let launch_parameters = LaunchParameters(
-            ParsedCommand::parse(target_launch_string)?,
-            install_dir.into(),
-        );
-
-        let mut launch_parameters = launch_parameters;
-        launch_parameters
-            .0
-            .make_command_absolute_if_local(&launch_parameters.1);
-
-        launch_parameters.0.ensure_executable()?;
-
-        info!(
-            "launching (in {}): {:?}",
-            launch_parameters.1.to_string_lossy(),
-            launch_parameters.0
-        );
-
-        // Games are run from the directory that contains their executable, not the
-        // install root. Archives frequently nest everything inside a top-level
-        // folder (e.g. "Game Name/Game.exe" with assets beside the exe); using the
-        // install root as the working directory makes those games unable to find
-        // their own data files. This mirrors a double-click launch, where Windows
-        // sets the working directory to the executable's folder. Executables that
-        // live outside the install dir (emulators) or directly at its root keep the
-        // install dir, so existing behaviour is unchanged for them.
-        let launch_working_dir = if let Some(local) = db_lock.applications.local_games.get(&meta.id) {
-            local.working_directory.clone()
-        } else {
-            let command_path = std::path::Path::new(&launch_parameters.0.command);
-            let install_dir = &launch_parameters.1;
-            match command_path.parent() {
-                Some(parent)
-                    if command_path.is_absolute()
-                        && parent.starts_with(install_dir)
-                        && parent != install_dir.as_path() =>
-                {
-                    parent.to_path_buf()
-                }
-                _ => install_dir.clone(),
-            }
-        };
+        let resolved = crate::resolution::finish_command(
+            target_launch_string, install_dir, game_version,
+            db_lock.applications.local_games.get(&meta.id).map(|local| local.working_directory.as_path()),
+        )?;
+        let launch_parameters = resolved.command;
+        launch_parameters.ensure_executable()?;
+        let launch_working_dir = resolved.working_directory;
+        info!("launching (in {}): {:?}", launch_working_dir.display(), launch_parameters);
 
         let mut command = {
-            let mut command = Command::new(launch_parameters.0.command);
-            command.args(launch_parameters.0.args);
+            let mut command = Command::new(launch_parameters.command);
+            command.args(launch_parameters.args);
             for parts in launch_parameters
-                .0
                 .env
                 .into_iter()
                 .map(|e| e.split("=").map(|v| v.to_string()).collect::<Vec<String>>())
