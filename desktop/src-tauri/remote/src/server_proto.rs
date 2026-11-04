@@ -1,6 +1,7 @@
 use database::borrow_db_checked;
 use http::{
-    HeaderMap, HeaderValue, Request, Response, StatusCode, Uri, header::{CONTENT_SECURITY_POLICY, USER_AGENT, X_FRAME_OPTIONS},
+    HeaderMap, HeaderValue, Request, Response, StatusCode, Uri,
+    header::{CONTENT_SECURITY_POLICY, HOST, USER_AGENT, X_FRAME_OPTIONS},
 };
 use log::{error, warn};
 use tauri::UriSchemeResponder;
@@ -74,6 +75,8 @@ async fn handle_server_proto(request: Request<Vec<u8>>) -> Result<Response<Vec<u
 
     let mut headers = HeaderMap::new();
     request.headers().clone_into(&mut headers);
+    // The custom-scheme host is not the upstream host. Let reqwest use the configured URL.
+    headers.remove(HOST);
     headers.remove(USER_AGENT);
     headers.append(USER_AGENT, HeaderValue::from_static("Drop Desktop Client"));
     headers.append(
@@ -90,8 +93,19 @@ async fn handle_server_proto(request: Request<Vec<u8>>) -> Result<Response<Vec<u
     {
         Ok(response) => response,
         Err(e) => {
-            warn!("Could not send response. Got {e:?} when sending");
-            return Err(e.status().unwrap_or(StatusCode::BAD_REQUEST));
+            let status = e.status().unwrap_or(StatusCode::BAD_REQUEST);
+            let error = crate::error::RemoteAccessError::from(e);
+            warn!("Could not send Store request: {error}");
+            return Err(match error {
+                crate::error::RemoteAccessError::ProxyAuth(
+                    proxy_auth::ProxyAuthError::Rejected,
+                ) => StatusCode::UNAUTHORIZED,
+                crate::error::RemoteAccessError::ProxyAuth(
+                    proxy_auth::ProxyAuthError::StorageUnavailable
+                    | proxy_auth::ProxyAuthError::MissingCredentials,
+                ) => StatusCode::SERVICE_UNAVAILABLE,
+                _ => status,
+            });
         }
     };
 
@@ -103,7 +117,7 @@ async fn handle_server_proto(request: Request<Vec<u8>>) -> Result<Response<Vec<u
     {
         let client_response_headers = client_http_response.headers_mut().unwrap();
         for (header, header_value) in response.headers() {
-            if header == CONTENT_SECURITY_POLICY  {
+            if header == CONTENT_SECURITY_POLICY {
                 continue;
             }
             if header == X_FRAME_OPTIONS {

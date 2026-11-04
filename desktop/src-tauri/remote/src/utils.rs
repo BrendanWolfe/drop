@@ -1,7 +1,7 @@
 use std::{
     fs::{self, File},
     io::Read,
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 
@@ -9,6 +9,12 @@ use client::{app_state::AppState, app_status::AppStatus};
 use database::db::DATA_ROOT_DIR;
 use http::Extensions;
 use log::{debug, info, warn};
+use proxy_auth::{
+    AuthStore,
+    transport::{
+        BlockingClient, DEFAULT_BLOCKING_TIMEOUT, ProxyAuthMiddleware, protected_redirect_policy,
+    },
+};
 use reqwest::Certificate;
 use reqwest_middleware::{
     ClientBuilder, ClientWithMiddleware, Error, Middleware, Next, Result,
@@ -16,6 +22,9 @@ use reqwest_middleware::{
 };
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, Manager, async_runtime::Mutex};
+use url::Url;
+
+use crate::{error::RemoteAccessError, proxy::PROXY_AUTH};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,9 +37,11 @@ impl DropHealthcheck {
     }
 }
 static DROP_CERT_BUNDLE: LazyLock<Vec<Certificate>> = LazyLock::new(fetch_certificates);
-pub static DROP_CLIENT_SYNC: LazyLock<reqwest::blocking::Client> = LazyLock::new(get_client_sync);
+static DROP_CLIENT_SYNC: LazyLock<BlockingClient> = LazyLock::new(|| get_client_sync(false));
+static PROTECTED_CLIENT_SYNC: LazyLock<BlockingClient> = LazyLock::new(|| get_client_sync(true));
 pub static DROP_CLIENT_ASYNC: LazyLock<ClientWithMiddleware> = LazyLock::new(get_client_async);
-pub static DROP_CLIENT_WS_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(get_client_ws);
+static DROP_CLIENT_WS_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| get_client_ws(false));
+static PROTECTED_CLIENT_WS: LazyLock<reqwest::Client> = LazyLock::new(|| get_client_ws(true));
 
 pub static DROP_APP_HANDLE: LazyLock<Mutex<Option<AppHandle>>> = LazyLock::new(|| Mutex::new(None));
 
@@ -152,20 +163,34 @@ fn fetch_certificates() -> Vec<Certificate> {
     certs
 }
 
-pub fn get_client_sync() -> reqwest::blocking::Client {
+fn get_client_sync(protected: bool) -> BlockingClient {
     let mut client = reqwest::blocking::ClientBuilder::new();
+    if protected {
+        client = client.redirect(protected_redirect_policy());
+    }
 
     for cert in DROP_CERT_BUNDLE.iter() {
         client = client.add_root_certificate(cert.clone());
     }
-    client
-        .use_rustls_tls()
-        .user_agent("Drop Desktop Client")
-        .connect_timeout(Duration::from_millis(1500))
-        .build()
-        .expect("Failed to build synchronous client")
+    BlockingClient::new(
+        client
+            .use_rustls_tls()
+            .user_agent("Drop Desktop Client")
+            .connect_timeout(Duration::from_millis(1500)),
+        Some(DEFAULT_BLOCKING_TIMEOUT),
+    )
+    .expect("Failed to build synchronous client")
 }
 pub fn get_client_async() -> ClientWithMiddleware {
+    build_client_async(PROXY_AUTH.clone(), true)
+}
+
+pub fn get_client_async_for(store: Arc<AuthStore>) -> ClientWithMiddleware {
+    // Connection probes must not change the active connection's online/offline state.
+    build_client_async(store, false)
+}
+
+fn build_client_async(store: Arc<AuthStore>, auto_offline: bool) -> ClientWithMiddleware {
     let mut client = reqwest::ClientBuilder::new();
 
     for cert in DROP_CERT_BUNDLE.iter() {
@@ -177,12 +202,30 @@ pub fn get_client_async() -> ClientWithMiddleware {
         .build()
         .expect("Failed to build asynchronous client");
 
-    ClientBuilder::new(normal_client)
-        .with(AutoOfflineMiddleware)
+    let mut protected = reqwest::ClientBuilder::new();
+    for cert in DROP_CERT_BUNDLE.iter() {
+        protected = protected.add_root_certificate(cert.clone());
+    }
+    let protected = protected
+        .use_rustls_tls()
+        .user_agent("Drop Desktop Client")
+        .redirect(protected_redirect_policy())
+        .build()
+        .expect("Failed to build protected asynchronous client");
+
+    let mut builder = ClientBuilder::new(normal_client);
+    if auto_offline {
+        builder = builder.with(AutoOfflineMiddleware);
+    }
+    builder
+        .with(ProxyAuthMiddleware::new(store, protected))
         .build()
 }
-pub fn get_client_ws() -> reqwest::Client {
+fn get_client_ws(protected: bool) -> reqwest::Client {
     let mut client = reqwest::ClientBuilder::new();
+    if protected {
+        client = client.redirect(protected_redirect_policy());
+    }
 
     for cert in DROP_CERT_BUNDLE.iter() {
         client = client.add_root_certificate(cert.clone());
@@ -193,4 +236,28 @@ pub fn get_client_ws() -> reqwest::Client {
         .http1_only()
         .build()
         .expect("Failed to build websocket client")
+}
+
+pub fn blocking_request(
+    method: http::Method,
+    url: Url,
+) -> std::result::Result<proxy_auth::transport::BlockingRequestBuilder, RemoteAccessError> {
+    Ok(proxy_auth::transport::blocking_request(
+        &DROP_CLIENT_SYNC,
+        &PROTECTED_CLIENT_SYNC,
+        &PROXY_AUTH,
+        method,
+        url,
+    )?)
+}
+
+pub fn websocket_request(
+    url: Url,
+) -> std::result::Result<proxy_auth::transport::WebsocketRequestBuilder, RemoteAccessError> {
+    Ok(proxy_auth::transport::websocket_request(
+        &DROP_CLIENT_WS_CLIENT,
+        &PROTECTED_CLIENT_WS,
+        &PROXY_AUTH,
+        url,
+    )?)
 }

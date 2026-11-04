@@ -88,7 +88,7 @@ pub async fn download_game_chunk(
         let raw_res = response.text().await.map_err(|e| {
             ApplicationDownloadError::Communication(RemoteAccessError::FetchErrorLegacy(e.into()))
         })?;
-        info!("{raw_res}");
+        info!("{}", remote::proxy::redact(&raw_res));
         if let Ok(err) = serde_json::from_str::<DropServerError>(&raw_res) {
             return Err(ApplicationDownloadError::Communication(
                 RemoteAccessError::InvalidResponse(err),

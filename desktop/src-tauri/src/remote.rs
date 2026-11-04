@@ -1,4 +1,7 @@
-use std::{sync::nonpoison::Mutex, time::Duration};
+use std::{
+    sync::{Arc, nonpoison::Mutex},
+    time::Duration,
+};
 
 use client::app_status::AppStatus;
 use database::{borrow_db_checked, borrow_db_mut_checked};
@@ -8,12 +11,15 @@ use remote::{
     auth::{auth_initiate_logic, ensure_web_token, generate_authorization_header},
     cache::{cache_object, get_cached_object},
     error::RemoteAccessError,
+    proxy::{
+        self, AuthStore, CONNECTION_UPDATE_LOCK, PreparedAuth, ProxyAuthInput, ProxyAuthStatus,
+    },
     requests::generate_url,
     setup,
-    utils::{DROP_CLIENT_ASYNC, DROP_CLIENT_WS_CLIENT, DropHealthcheck},
+    utils::{DropHealthcheck, blocking_request, get_client_async_for, websocket_request},
 };
-use reqwest_websocket::{Message, RequestBuilderExt};
-use serde::Deserialize;
+use reqwest_websocket::Message;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use url::Url;
 use utils::{app_emit, webbrowser_open::webbrowser_open};
@@ -28,19 +34,48 @@ pub async fn prepare_store() -> Result<(), RemoteAccessError> {
 #[tauri::command]
 pub async fn use_remote(
     url: String,
+    proxy_auth: Option<ProxyAuthInput>,
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<(), RemoteAccessError> {
-    debug!("connecting to url {url}");
+    let _update = CONNECTION_UPDATE_LOCK.lock().await;
     let base_url = Url::parse(&url)?;
+    // Validate before logging or sending: credentials must never be embedded in a URL.
+    proxy::server_origin(&base_url)?;
+    let prepared = proxy::prepare(&base_url, proxy_auth)?;
+    test_connection(&base_url, &prepared).await?;
+    proxy::commit(&base_url, prepared)?;
 
+    let mut db_state = borrow_db_mut_checked();
+    if Url::parse(&db_state.base_url).ok().map(|u| u.origin()) != Some(base_url.origin()) {
+        db_state.auth = None;
+    }
+    db_state.base_url = base_url.to_string();
+    drop(db_state);
+
+    let mut app_state = state.lock();
+    app_state.status = AppStatus::SignedOut;
+    app_state.user = None;
+    Ok(())
+}
+
+async fn test_connection(base_url: &Url, prepared: &PreparedAuth) -> Result<(), RemoteAccessError> {
+    let candidate = Arc::new(AuthStore::default());
+    if let Some(credentials) = &prepared.credentials {
+        candidate.activate(base_url, Ok(credentials.clone()))?;
+    }
     // Test Drop url
     let test_endpoint = base_url.join("/api/v1")?;
-    let client = DROP_CLIENT_ASYNC.clone();
+    let client = get_client_async_for(candidate);
     let response = client
         .get(test_endpoint.to_string())
         .timeout(Duration::from_secs(3))
         .send()
         .await?;
+
+    if matches!(response.status().as_u16(), 401 | 403) {
+        return Err(RemoteAccessError::ConnectionDenied);
+    }
+    let response = response.error_for_status()?;
 
     let result: DropHealthcheck = response.json().await?;
 
@@ -49,13 +84,36 @@ pub async fn use_remote(
         return Err(RemoteAccessError::InvalidEndpoint);
     }
 
-    let mut app_state = state.lock();
-    app_state.status = AppStatus::SignedOut;
-    drop(app_state);
+    Ok(())
+}
 
-    let mut db_state = borrow_db_mut_checked();
-    db_state.base_url = base_url.to_string();
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionSettings {
+    url: String,
+    proxy_auth: Option<ProxyAuthStatus>,
+}
 
+#[tauri::command]
+pub fn fetch_connection_settings() -> Result<ConnectionSettings, RemoteAccessError> {
+    let url = borrow_db_checked().base_url.clone();
+    let proxy_auth = Url::parse(&url)
+        .ok()
+        .map(|url| proxy::status(&url))
+        .transpose()?;
+    Ok(ConnectionSettings { url, proxy_auth })
+}
+
+#[tauri::command]
+pub async fn update_proxy_auth(proxy_auth: ProxyAuthInput) -> Result<(), RemoteAccessError> {
+    let _update = CONNECTION_UPDATE_LOCK.lock().await;
+    let url = Url::parse(&borrow_db_checked().base_url)?;
+    let prepared = proxy::prepare(&url, Some(proxy_auth))?;
+    // Turning authentication off must remain possible even if the proxy/server is unavailable.
+    if prepared.credentials.is_some() {
+        test_connection(&url, &prepared).await?;
+    }
+    proxy::commit(&url, prepared)?;
     Ok(())
 }
 
@@ -76,8 +134,7 @@ pub fn gen_drop_url(path: String) -> Result<String, RemoteAccessError> {
 pub fn fetch_drop_object(path: String) -> Result<Vec<u8>, RemoteAccessError> {
     let _drop_url = gen_drop_url(path.clone())?;
     let req = generate_url(&[&path], &[])?;
-    let req = remote::utils::DROP_CLIENT_SYNC
-        .get(req)
+    let req = blocking_request(http::Method::GET, req)?
         .header("Authorization", generate_authorization_header())
         .send();
 
@@ -88,6 +145,10 @@ pub fn fetch_drop_object(path: String) -> Result<Vec<u8>, RemoteAccessError> {
             Ok(data)
         }
         Err(e) => {
+            let e = RemoteAccessError::from(e);
+            if matches!(&e, RemoteAccessError::ProxyAuth(_)) {
+                return Err(e);
+            }
             debug!("{e}");
             get_cached_object::<Vec<u8>>(&path)
         }
@@ -162,8 +223,7 @@ pub fn auth_initiate_code(app: AppHandle) -> Result<String, RemoteAccessError> {
     tauri::async_runtime::spawn(async move {
         let load = async || -> Result<(), RemoteAccessError> {
             let ws_url = base_url.join("/api/v1/client/auth/code/ws")?;
-            let response = DROP_CLIENT_WS_CLIENT
-                .get(ws_url)
+            let response = websocket_request(ws_url)?
                 .header("Authorization", header_code)
                 .upgrade()
                 .send()

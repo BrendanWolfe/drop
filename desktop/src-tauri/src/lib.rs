@@ -46,7 +46,6 @@ use log4rs::{
     Config,
     append::{console::ConsoleAppender, file::FileAppender},
     config::{Appender, Root},
-    encode::pattern::PatternEncoder,
 };
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewBuilder, WebviewUrl,
@@ -66,6 +65,7 @@ mod downloads;
 mod games;
 mod process;
 mod remote;
+mod logging;
 mod scheduler;
 mod settings;
 mod updates;
@@ -82,7 +82,7 @@ use crate::scheduler::scheduler_task;
 
 async fn setup(handle: AppHandle) -> AppState {
     let logfile = FileAppender::builder()
-        .encoder(Box::new(PatternEncoder::new(
+        .encoder(Box::new(logging::RedactingEncoder::new(
             "{d} | {l} | {f}:{L} - {m}{n}",
         )))
         .append(false)
@@ -90,7 +90,7 @@ async fn setup(handle: AppHandle) -> AppState {
         .expect("Failed to setup logfile");
 
     let console = ConsoleAppender::builder()
-        .encoder(Box::new(PatternEncoder::new(
+        .encoder(Box::new(logging::RedactingEncoder::new(
             "{d} | {h({l})} | {f}:{L} - {m}{n}",
         )))
         .build();
@@ -112,6 +112,7 @@ async fn setup(handle: AppHandle) -> AppState {
     log4rs::init_config(config).expect("Failed to initialise log4rs");
 
     ProcessManagerWrapper::init(handle.clone());
+    ::remote::proxy::initialize();
     DownloadManagerWrapper::init(handle.clone());
 
     debug!("checking if database is set up");
@@ -194,7 +195,7 @@ pub fn custom_panic_handler(e: &PanicHookInfo) -> Option<()> {
             .as_secs()
     ));
     let mut file = File::create_new(crash_file).ok()?;
-    file.write_all(format!("Drop crashed with the following panic:\n{e}").as_bytes())
+    file.write_all(::remote::proxy::redact(&format!("Drop crashed with the following panic:\n{e}")).as_bytes())
         .ok()?;
     drop(file);
 
@@ -246,6 +247,8 @@ pub fn run() {
             fetch_drop_object,
             check_online,
             prepare_store,
+            fetch_connection_settings,
+            update_proxy_auth,
             // Library
             fetch_library,
             fetch_game,

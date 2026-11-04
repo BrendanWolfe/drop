@@ -269,6 +269,12 @@ pub mod data {
 
         #[derive(Serialize, Deserialize, Clone, Default)]
         pub struct Database {
+            /// Header names only. Values live in the OS credential store, never this database.
+            #[serde(default)]
+            pub proxy_auth: HashMap<String, Vec<String>>,
+            /// Origins whose dormant OS credential records must be deleted when the vault unlocks.
+            #[serde(default)]
+            pub proxy_auth_cleanup: std::collections::HashSet<String>,
             #[serde(default)]
             pub settings: Settings,
             pub auth: Option<DatabaseAuth>,
@@ -288,6 +294,8 @@ pub mod data {
             cache_dir: PathBuf,
         ) -> Self {
             Self {
+                proxy_auth: HashMap::new(),
+                proxy_auth_cleanup: Default::default(),
                 applications: DatabaseApplications {
                     install_dirs: vec![games_base_dir.into()],
                     game_statuses: HashMap::new(),
@@ -323,7 +331,28 @@ pub mod data {
 
     #[cfg(test)]
     mod tests {
-        use super::{InstalledGameType, Settings, UserConfiguration};
+        use super::{Database, InstalledGameType, Settings, UserConfiguration};
+
+        #[test]
+        fn legacy_database_defaults_to_no_proxy_authentication() {
+            let database = Database::new("games", None, "cache".into());
+            let encoded = ron::to_string(&database).unwrap();
+            let legacy = encoded.replace("proxy_auth:{},", "").replace("proxy_auth_cleanup:[],", "");
+            assert_ne!(legacy, encoded);
+            let decoded: Database = ron::from_str(&legacy).unwrap();
+            assert!(decoded.proxy_auth.is_empty());
+            assert!(decoded.proxy_auth_cleanup.is_empty());
+        }
+
+        #[test]
+        fn deferred_cleanup_survives_restart_without_enabling_old_credentials() {
+            let mut database = Database::new("games", None, "cache".into());
+            database.proxy_auth_cleanup.insert("https://drop.example".into());
+            let encoded = ron::to_string(&database).unwrap();
+            let decoded: Database = ron::from_str(&encoded).unwrap();
+            assert!(decoded.proxy_auth.is_empty());
+            assert!(decoded.proxy_auth_cleanup.contains("https://drop.example"));
+        }
 
         #[test]
         fn settings_default_speed_is_unlimited() {

@@ -33,6 +33,7 @@
                 name="company-website"
                 id="company-website"
                 v-model="url"
+                :disabled="loading"
                 class="block flex-1 border-0 bg-transparent py-1.5 text-zinc-100 placeholder:text-zinc-400 focus:ring-0 sm:text-sm sm:leading-6"
                 placeholder="www.example.com"
               />
@@ -40,13 +41,16 @@
           </div>
         </div>
 
+        <ProxyAuthFields v-model="proxyAuth" :disabled="loading" />
+        <ProxyCleanupNotice :pending="cleanupPending" />
+
         <div>
-          <LoadingButton :loading="loading" class="w-full">
+          <LoadingButton :loading="loading" :disabled="loading" class="w-full">
             Continue ->
           </LoadingButton>
         </div>
 
-        <div v-if="error" class="mt-1 rounded-md bg-red-600/10 p-4">
+        <div v-if="error" role="alert" class="mt-1 rounded-md bg-red-600/10 p-4">
           <div class="flex">
             <div class="flex-shrink-0">
               <XCircleIcon class="h-5 w-5 text-red-600" aria-hidden="true" />
@@ -77,14 +81,38 @@
 <script setup lang="ts">
 import { XCircleIcon } from "@heroicons/vue/16/solid";
 import { invoke } from "@tauri-apps/api/core";
+import { proxyAuthForm, proxyAuthPayload, type ConnectionSettings } from "~/utils/proxy-auth";
 
 definePageMeta({
   layout: "mini",
 });
 
 const url = ref("");
-const error = ref(undefined);
+const error = ref<string>();
 const loading = ref(false);
+const proxyAuth = ref(proxyAuthForm());
+const cleanupPending = ref(false);
+
+onMounted(async () => {
+  try {
+    const settings = await invoke<ConnectionSettings>("fetch_connection_settings");
+    url.value = settings.url;
+    proxyAuth.value = proxyAuthForm(settings.proxyAuth);
+    cleanupPending.value = settings.proxyAuth?.cleanupPending ?? false;
+  } catch {
+    error.value = "Could not load connection settings. You can enter them again below.";
+  }
+});
+
+// Saved placeholders may only be retained for the original server address.
+watch(url, (newUrl, oldUrl) => {
+  if (oldUrl && newUrl !== oldUrl) {
+    proxyAuth.value.headers.forEach((header) => {
+      header.savedName = undefined;
+      header.value = "";
+    });
+  }
+});
 
 const router = useRouter();
 const showHttps = computed(() => {
@@ -100,8 +128,12 @@ async function connect() {
     ? url.value
     : `https://${url.value}`;
 
-  const result = await invoke("use_remote", { url: newUrl });
-  router.push("/auth");
+  await invoke("use_remote", { url: newUrl, proxyAuth: proxyAuthPayload(proxyAuth.value) });
+  proxyAuth.value.headers.forEach((header) => { header.value = ""; });
+  const settings = await invoke<ConnectionSettings>("fetch_connection_settings");
+  router.push(settings.proxyAuth?.cleanupPending
+    ? { path: "/auth", query: { proxyCleanupPending: "1" } }
+    : "/auth");
 }
 
 function connect_wrapper() {
@@ -110,8 +142,7 @@ function connect_wrapper() {
   connect()
     .then(() => {})
     .catch((e) => {
-      console.log(e);
-      error.value = e;
+      error.value = String(e);
     })
     .finally(() => {
       loading.value = false;

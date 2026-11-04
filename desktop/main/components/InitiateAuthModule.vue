@@ -12,6 +12,7 @@
     >
       <div class="max-w-lg">
         <slot />
+        <ProxyCleanupNotice :pending="route.query.proxyCleanupPending === '1'" class="mt-4" />
         <div class="mt-10">
           <div>
             <div v-if="loading" role="status">
@@ -114,6 +115,7 @@ import { ArrowTopRightOnSquareIcon } from "@heroicons/vue/20/solid";
 import { invoke } from "@tauri-apps/api/core";
 
 const loading = ref(false);
+const route = useRoute();
 const error = ref<string | undefined>();
 
 let offerManualTimeout: NodeJS.Timeout | undefined;

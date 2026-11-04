@@ -46,6 +46,7 @@ import {
   CubeIcon,
   HomeIcon,
   BugAntIcon,
+  ServerIcon,
 } from "@heroicons/vue/16/solid";
 import type { Component } from "vue";
 import type { NavigationItem } from "~/types";
@@ -98,6 +99,12 @@ const navigation = computed(() => [
     route: "/settings",
     prefix: "/settings",
     icon: HomeIcon,
+  },
+  {
+    label: "Server",
+    route: "/settings/server",
+    prefix: "/settings/server",
+    icon: ServerIcon,
   },
   {
     label: "Downloads",

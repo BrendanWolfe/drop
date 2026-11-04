@@ -1,6 +1,6 @@
 [package]
 name = "drop-app"
-version = "0.4.2"
+version = "0.4.3"
 description = "The client application for the open-source, self-hosted game distribution platform Drop"
 authors = ["Drop OSS"]
 edition = "2024"
@@ -14,6 +14,7 @@ members = [
   "download_manager",
   "games",
   "process",
+  "proxy_auth",
   "remote",
   "utils",
 ]

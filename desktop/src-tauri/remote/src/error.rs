@@ -10,7 +10,7 @@ use url::ParseError;
 
 use serde::Deserialize;
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DropServerError {
     pub status_code: usize,
@@ -19,13 +19,15 @@ pub struct DropServerError {
     // pub url: String,
 }
 
-#[derive(Debug, SerializeDisplay)]
+#[derive(SerializeDisplay)]
 pub enum RemoteAccessError {
     FetchErrorLegacy(Arc<reqwest::Error>),
     FetchError(Arc<reqwest_middleware::Error>),
     FetchErrorWS(Arc<reqwest_websocket::Error>),
     ParsingError(ParseError),
     InvalidEndpoint,
+    ProxyAuth(proxy_auth::ProxyAuthError),
+    ConnectionDenied,
     HandshakeFailed(String),
     GameNotFound(String),
     InvalidResponse(DropServerError),
@@ -40,7 +42,36 @@ pub enum RemoteAccessError {
 
 impl Display for RemoteAccessError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
+        write!(
+            f,
+            "{}",
+            proxy_auth::redact(&format!("{}", UnredactedError(self)))
+        )
+    }
+}
+
+impl std::fmt::Debug for RemoteAccessError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("RemoteAccessError")
+            .field(&self.to_string())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for DropServerError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DropServerError")
+            .field("status_code", &self.status_code)
+            .field("status_message", &proxy_auth::redact(&self.status_message))
+            .field("message", &proxy_auth::redact(&self.message))
+            .finish()
+    }
+}
+
+struct UnredactedError<'a>(&'a RemoteAccessError);
+impl Display for UnredactedError<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
             RemoteAccessError::FetchError(error) => {
                 if error.is_connect() {
                     return write!(
@@ -81,6 +112,11 @@ impl Display for RemoteAccessError {
                 write!(f, "{parse_error}")
             }
             RemoteAccessError::InvalidEndpoint => write!(f, "invalid drop endpoint"),
+            RemoteAccessError::ProxyAuth(error) => write!(f, "{error}"),
+            RemoteAccessError::ConnectionDenied => write!(
+                f,
+                "Server access was denied (HTTP 401/403). Check reverse proxy authentication and server permissions."
+            ),
             RemoteAccessError::HandshakeFailed(message) => {
                 write!(f, "failed to complete handshake: {message}")
             }
@@ -119,8 +155,27 @@ impl From<reqwest::Error> for RemoteAccessError {
         RemoteAccessError::FetchErrorLegacy(Arc::new(err))
     }
 }
+impl From<proxy_auth::transport::TransportError> for RemoteAccessError {
+    fn from(error: proxy_auth::transport::TransportError) -> Self {
+        match error {
+            proxy_auth::transport::TransportError::Http(e) => e.into(),
+            proxy_auth::transport::TransportError::WebSocket(e) => (*e).into(),
+            proxy_auth::transport::TransportError::Proxy(e) => e.into(),
+        }
+    }
+}
+impl From<proxy_auth::ProxyAuthError> for RemoteAccessError {
+    fn from(error: proxy_auth::ProxyAuthError) -> Self {
+        Self::ProxyAuth(error)
+    }
+}
 impl From<reqwest_middleware::Error> for RemoteAccessError {
     fn from(value: reqwest_middleware::Error) -> Self {
+        if let reqwest_middleware::Error::Middleware(error) = &value
+            && let Some(error) = error.downcast_ref::<proxy_auth::ProxyAuthError>()
+        {
+            return Self::ProxyAuth(*error);
+        }
         RemoteAccessError::FetchError(Arc::new(value))
     }
 }

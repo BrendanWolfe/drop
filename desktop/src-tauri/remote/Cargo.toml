@@ -16,6 +16,7 @@ http = "1.3.1"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 log = "0.4.28"
 md5 = "0.8.0"
+proxy_auth = { path = "../proxy_auth" }
 reqwest = { version = "0.12.28", default-features = false, features = [
   "blocking",
   "http2",

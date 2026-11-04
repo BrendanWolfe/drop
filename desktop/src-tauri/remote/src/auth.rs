@@ -16,7 +16,7 @@ use url::Url;
 use crate::{
     error::{DropServerError, RemoteAccessError},
     requests::make_authenticated_get,
-    utils::{DROP_CLIENT_ASYNC, DROP_CLIENT_SYNC},
+    utils::{DROP_CLIENT_ASYNC, blocking_request},
 };
 
 use super::{
@@ -134,6 +134,7 @@ pub async fn ensure_web_token() -> Result<(), RemoteAccessError> {
             let response = DROP_CLIENT_ASYNC
                 .get(server_url.join("/api/v1/user")?)
                 .header("Authorization", header)
+                .with_extension(proxy_auth::transport::AllowAuthenticationRejection)
                 .timeout(Duration::from_secs(15))
                 .send()
                 .await?;
@@ -211,8 +212,7 @@ pub fn auth_initiate_logic(mode: String) -> Result<String, RemoteAccessError> {
         mode,
     };
 
-    let client = DROP_CLIENT_SYNC.clone();
-    let response = client.post(endpoint.to_string()).json(&body).send()?;
+    let response = blocking_request(http::Method::POST, endpoint)?.json(&body).send()?;
 
     if response.status() != 200 {
         let data: DropServerError = response.json()?;

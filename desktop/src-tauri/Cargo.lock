@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "drop-app"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4619,6 +4619,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "proxy_auth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "http 1.4.0",
+ "keyring",
+ "log",
+ "log4rs",
+ "reqwest 0.12.28",
+ "reqwest-middleware 0.4.2",
+ "reqwest-websocket",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.38.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4992,6 +5012,7 @@ dependencies = [
  "jsonwebtoken",
  "log",
  "md5 0.8.0",
+ "proxy_auth",
  "reqwest 0.12.28",
  "reqwest-middleware 0.4.2",
  "reqwest-websocket",
