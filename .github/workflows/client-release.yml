@@ -40,6 +40,9 @@ jobs:
           node-version: lts/*
           cache: pnpm
 
+      - name: Test desktop release configuration
+        run: node --experimental-strip-types --test desktop/main/tests/desktop-release.test.ts
+
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
 
@@ -89,7 +92,8 @@ jobs:
           if (/[\r\n]/.test(tag)) throw new Error('Release tags must be a single line');
           fs.appendFileSync(process.env.GITHUB_ENV, `DROP_RELEASE_TAG=${tag}\n`);
           fs.writeFileSync('desktop/src-tauri/tauri.updater.conf.json', JSON.stringify({
-            bundle: { createUpdaterArtifacts: true }
+            bundle: { createUpdaterArtifacts: true },
+            plugins: { updater: { pubkey: process.env.DROP_UPDATER_PUBLIC_KEY.trim() } }
           }));
           NODE
 
