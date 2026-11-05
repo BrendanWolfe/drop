@@ -59,6 +59,7 @@ use url::Url;
 use utils::app_emit;
 
 mod client;
+mod app_updates;
 mod collections;
 mod download_manager;
 mod downloads;
@@ -119,6 +120,7 @@ async fn setup(handle: AppHandle) -> AppState {
     ::remote::proxy::initialize();
     DownloadManagerWrapper::init(handle.clone());
     download_reporting::start(&handle);
+    app_updates::start(&handle);
 
     debug!("checking if database is set up");
     let is_set_up = DB.database_is_set_up();
@@ -221,6 +223,8 @@ pub fn run() {
     }));
 
     let mut builder = tauri::Builder::default()
+        .manage(app_updates::DesktopUpdater::default())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init());
@@ -240,6 +244,9 @@ pub fn run() {
             fetch_state,
             quit,
             fetch_system_data,
+            app_updates::desktop_update_status,
+            app_updates::check_desktop_update,
+            app_updates::install_desktop_update,
             open_fs,
             // User utils
             update_settings,

@@ -29,6 +29,7 @@
       <div class="inline-flex items-center">
         <ol class="inline-flex gap-3">
           <HeaderProtonSupportWidget />
+          <HeaderUpdateWidget />
           <HeaderQueueWidget :object="currentQueueObject" />
           <OfflineHeaderWidget v-if="state?.status === AppStatus.Offline" />
           <HeaderUserWidget />
