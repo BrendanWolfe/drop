@@ -41,6 +41,10 @@ releases, and releases without desktop update artifacts are ignored. If GitHub's
 latest release is not eligible, the most recent 100 releases are inspected for a
 stable main desktop release. A failed check or download is retried after five minutes.
 
+The `v0.4.5+updater.1` bridge release changes only desktop update selection and
+the release plumbing needed to ship it. Existing signed-update clients accept
+its new tag at the same app version and then follow stable main releases only.
+
 Updates download automatically and are signature-verified before the blue
 **Update and restart** button appears immediately left of Downloads. Nothing is
 installed until the user clicks it. Windows uses the NSIS installer; Linux uses

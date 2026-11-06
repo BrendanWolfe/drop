@@ -129,4 +129,31 @@ mod tests {
             "v0.4.5"
         ));
     }
+
+    #[test]
+    fn legacy_client_accepts_same_version_bridge_then_new_client_does_not_repeat_it() {
+        let version = Version::parse("0.4.5").unwrap();
+        assert!(should_offer_update(
+            &version,
+            &version,
+            "v0.4.5+updater.1",
+            "v0.4.5-build.14"
+        ));
+        assert!(!should_offer_update(
+            &version,
+            &version,
+            "v0.4.5+updater.1",
+            "v0.4.5+updater.1"
+        ));
+    }
+
+    #[test]
+    fn emulator_dev_build_cannot_be_replaced_by_the_older_stable_bridge() {
+        assert!(!should_offer_update(
+            &Version::parse("0.4.6").unwrap(),
+            &Version::parse("0.4.5").unwrap(),
+            "v0.4.5+updater.1",
+            "v0.4.6-dev.1"
+        ));
+    }
 }

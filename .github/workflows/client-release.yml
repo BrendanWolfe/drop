@@ -145,6 +145,7 @@ jobs:
         run: cargo test --locked -p steam_shortcuts
 
       - name: Configure signed desktop updates
+        id: updater-config
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

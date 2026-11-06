@@ -155,8 +155,8 @@ async fn download_latest(
         .user_agent(concat!("Drop-Desktop/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(30))
         .build()?;
-    // GitHub's latest endpoint excludes prereleases, so frequent develop builds
-    // cannot push the current stable release out of the first 100 results.
+    // Frequent develop builds cannot crowd the current stable release out of
+    // the first page. Still verify the branch and prerelease flag ourselves.
     let latest = client
         .get(STABLE_RELEASE_API)
         .header("Accept", "application/vnd.github+json")
