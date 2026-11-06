@@ -42,6 +42,7 @@ pub enum ApplicationDownloadError {
     IoError(Arc<io::Error>),
     DownloadError(RemoteAccessError),
     InvalidCommand,
+    BuildUnavailable,
     Archive(String),
 }
 
@@ -70,6 +71,7 @@ impl Display for ApplicationDownloadError {
                 write!(f, "Download failed with error {error:?}")
             }
             ApplicationDownloadError::InvalidCommand => write!(f, "Invalid command state"),
+            ApplicationDownloadError::BuildUnavailable => write!(f, "This game version is not available for this platform. Ask your administrator to check the build platform and Proton eligibility."),
             ApplicationDownloadError::Archive(message) => write!(f, "{message}"),
         }
     }

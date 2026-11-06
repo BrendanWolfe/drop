@@ -107,6 +107,8 @@
                         v-for="config in version.setups"
                         :key="config.setupId"
                         :config="config"
+                        :game-id="game.id"
+                        @compatibility="config.protonCompatible = $event"
                       />
                       <li
                         v-if="version.setups.length == 0"
@@ -125,6 +127,8 @@
                         v-for="config in version.launches"
                         :key="config.launchId"
                         :config="config"
+                        :game-id="game.id"
+                        @compatibility="config.protonCompatible = $event"
                       />
                     </ul>
                   </td>

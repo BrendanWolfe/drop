@@ -81,6 +81,25 @@ test("downloads wait for a folder choice or compatible version", () => {
   }
 });
 
+test("Store quick downloads do not skip the Proton setup warning", () => {
+  assert.equal(
+    canStartStoreDownload(
+      { type: "Remote" },
+      [{ protonSetupRequired: true }],
+      ["/games"],
+    ),
+    false,
+  );
+  assert.equal(
+    canStartStoreDownload(
+      { type: "Remote" },
+      [{ protonSetupRequired: false }],
+      ["/games"],
+    ),
+    true,
+  );
+});
+
 test("existing installations and active downloads are not queued again", () => {
   for (const type of [
     "Installed",

@@ -184,6 +184,7 @@ mod tests {
 
     fn launch(mode: EmulatorLaunchMode, command: &str) -> LaunchConfiguration {
         LaunchConfiguration {
+            proton_compatible: false,
             launch_id: "launch".into(),
             name: "Play".into(),
             command: command.into(),

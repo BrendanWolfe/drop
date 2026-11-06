@@ -633,6 +633,8 @@ class LibraryManager {
                   data: metadata.setups.map((v) => ({
                     command: v.launch,
                     platform: v.platform,
+                    protonCompatible:
+                      v.platform === "Windows" && !!v.protonCompatible,
                   })),
                 },
               },
@@ -644,6 +646,8 @@ class LibraryManager {
                         name: v.name,
                         command: v.launch,
                         platform: v.platform,
+                        protonCompatible:
+                          v.platform === "Windows" && !!v.protonCompatible,
                         ...(v.emulatorId && game.type === "Game"
                           ? {
                               emulatorId: v.emulatorId,

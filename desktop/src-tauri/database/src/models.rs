@@ -97,6 +97,12 @@ pub mod data {
             }
         }
 
+        // Preserve launches already installed by clients predating eligibility.
+        // Updated servers always send an explicit value; new downloads opt in.
+        fn legacy_proton_compatible() -> bool {
+            true
+        }
+
         #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
         #[serde(rename_all = "camelCase")]
         pub struct UserConfiguration {
@@ -142,6 +148,8 @@ pub mod data {
             pub name: String,
             pub command: String,
             pub platform: Platform,
+            #[serde(default = "legacy_proton_compatible")]
+            pub proton_compatible: bool,
             pub umu_id_override: Option<String>,
 
             pub emulator: Option<LaunchConfigurationEmulator>,
@@ -185,6 +193,8 @@ pub mod data {
         pub struct SetupConfiguration {
             pub command: String,
             pub platform: Platform,
+            #[serde(default = "legacy_proton_compatible")]
+            pub proton_compatible: bool,
         }
 
         /// Device-local entries are authoritative here, never in the server cache.

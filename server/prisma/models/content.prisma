@@ -163,6 +163,7 @@ model SetupConfiguration {
   command String
 
   platform Platform
+  protonCompatible Boolean @default(false)
 
   versionId   String
   gameVersion GameVersion @relation(fields: [versionId], references: [versionId], onDelete: Cascade, onUpdate: Cascade)
@@ -176,6 +177,7 @@ model LaunchConfiguration {
   command String
 
   platform Platform
+  protonCompatible Boolean @default(false)
 
   // For emulation targets
   emulatorId          String?

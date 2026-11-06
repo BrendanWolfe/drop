@@ -184,6 +184,22 @@
     >
       {{ $t("library.admin.import.version.platform") }}
     </SelectorPlatform>
+    <label
+      v-if="launchConfiguration.platform === 'Windows'"
+      class="mb-3 flex min-h-10 cursor-pointer items-start gap-3 text-sm text-zinc-200"
+    >
+      <input
+        v-model="launchConfiguration.protonCompatible"
+        type="checkbox"
+        class="mt-1 rounded border-zinc-700 bg-zinc-950 text-blue-600 focus:ring-blue-600"
+      />
+      <span>
+        {{ $t("proton.allowLinux") }}
+        <span class="block text-xs text-zinc-400 whitespace-normal">{{
+          $t("proton.eligibilityHelp")
+        }}</span>
+      </span>
+    </label>
     <div v-if="props.type && props.type === 'Game' && props.allowEmulator">
       <h1 class="block text-sm font-medium leading-6 text-zinc-100">
         {{ $t("library.admin.launchRow.emulatorTitle") }}
@@ -269,6 +285,7 @@ const emulator = computed({
 function updatePlatform(v: Platform | undefined) {
   if (!v) return;
   launchConfiguration.value.platform = v;
+  if (v !== "Windows") launchConfiguration.value.protonCompatible = false;
   if (emulator.value) {
     if (emulator.value.platform !== v) {
       emulator.value = undefined;

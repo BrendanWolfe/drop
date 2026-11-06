@@ -6,13 +6,13 @@ use std::{
 
 use serde_with::SerializeDisplay;
 
-#[derive(SerializeDisplay, Clone)]
+#[derive(SerializeDisplay, Clone, Debug)]
 pub enum ProcessError {
     NotInstalled,
     AlreadyRunning,
     InvalidID,
     InvalidVersion,
-    RequiredDependency(String, String),
+    RequiredDependency(String, String, database::platform::Platform),
     IOError(Arc<Error>),
     FormatError(String), // String errors supremacy
     InvalidPlatform,
@@ -43,11 +43,11 @@ impl Display for ProcessError {
             ProcessError::NotExecutable(command) => {
                 &format!("The command '{command}' exists but is not marked as executable")
             }
-            ProcessError::RequiredDependency(game_id, version_id) => &format!(
+            ProcessError::RequiredDependency(game_id, version_id, _) => &format!(
                 "Missing a required dependency to launch this game: {} {}",
                 game_id, version_id
             ),
-            ProcessError::NoCompat => "No Proton compatibility layer could be found for this tool. Add an override or set your global default in settings.",
+            ProcessError::NoCompat => "Proton setup required. Install umu-run and select a valid Proton version in Settings → Compatibility, or set a per-game Proton override.",
         };
         write!(f, "{s}")
     }

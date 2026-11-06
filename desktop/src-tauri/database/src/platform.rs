@@ -9,6 +9,11 @@ pub enum Platform {
 }
 
 impl Platform {
+    /// The package platform never changes when a compatibility layer is used.
+    pub fn can_run_on(self, host: Platform, proton_compatible: bool) -> bool {
+        self == host || (host == Self::Linux && self == Self::Windows && proton_compatible)
+    }
+
     #[cfg(target_os = "windows")]
     pub const HOST: Platform = Self::Windows;
     #[cfg(target_os = "macos")]

@@ -66,6 +66,7 @@ pub fn register(db: &mut Database, local: LocalGame, command: Option<String>) {
     };
     let launches = command
         .map(|command| LaunchConfiguration {
+            proton_compatible: true, // Device-local launchers are explicitly chosen by their owner.
             launch_id: local.id.clone(),
             name: "Play".into(),
             command,

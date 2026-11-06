@@ -2,6 +2,9 @@
 
 The official desktop client for Drop.
 
+See [Native builds and Proton](PLATFORMS.md) for platform eligibility, importing
+Windows games for Linux, and build-specific update behavior.
+
 See [Local games and archive downloads](LOCAL_GAMES.md) for usage, supported
 formats, download-monitoring behavior, and native build dependencies.
 

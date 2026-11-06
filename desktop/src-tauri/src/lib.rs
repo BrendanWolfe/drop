@@ -73,6 +73,7 @@ mod download_reporting;
 mod scheduler;
 mod settings;
 mod updates;
+mod version_options;
 
 use client::*;
 use download_manager::*;

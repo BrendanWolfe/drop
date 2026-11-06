@@ -1,14 +1,21 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, nonpoison::Mutex},
+};
 
 use database::{
     DownloadType, DownloadableMetadata, GameDownloadStatus, borrow_db_checked,
-    models::data::{InstalledGameType, UserConfiguration},
+    models::data::InstalledGameType,
     platform::Platform,
 };
 use download_manager::{
     DOWNLOAD_MANAGER, downloadable::Downloadable, error::ApplicationDownloadError,
 };
 use games::downloads::download_agent::GameDownloadAgent;
+use crate::{
+    AppState, games::fetch_game_version_options_logic,
+    version_options::{configuration_for_build, contains_build},
+};
 
 #[tauri::command]
 pub async fn download_game(
@@ -17,9 +24,14 @@ pub async fn download_game(
     target_platform: Platform,
     install_dir: usize,
     enable_updates: bool,
+    state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<(), ApplicationDownloadError> {
     if borrow_db_checked().applications.local_games.contains_key(&game_id) {
         return Err(ApplicationDownloadError::Archive("Local games are not downloaded from the Drop server.".into()));
+    }
+    let options = fetch_game_version_options_logic(game_id.clone(), state).await?;
+    if !contains_build(&options, &version_id, target_platform) {
+        return Err(ApplicationDownloadError::BuildUnavailable);
     }
     let sender = { DOWNLOAD_MANAGER.get_sender().clone() };
 
@@ -39,15 +51,21 @@ pub async fn download_game(
         }
     };
 
-    let configuration = UserConfiguration {
-        enable_updates,
-        ..Default::default()
+    let configuration = {
+        let db = borrow_db_checked();
+        let existing = db.applications.installed_game_version.get(&meta.id)
+            .and_then(|installed| db.applications.game_versions.get(&installed.version)
+                .map(|version| (installed.target_platform, &version.user_configuration)));
+        configuration_for_build(existing, target_platform, enable_updates)
     };
 
     let base_dir = {
         let db_lock = borrow_db_checked();
 
-        db_lock.applications.install_dirs[install_dir].clone()
+        db_lock.applications.install_dirs
+            .get(install_dir)
+            .ok_or(ApplicationDownloadError::InvalidCommand)?
+            .clone()
     };
 
     let game_download_agent = GameDownloadAgent::new(

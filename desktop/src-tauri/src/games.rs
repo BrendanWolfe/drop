@@ -21,10 +21,11 @@ use remote::{
     requests::generate_url,
     utils::DROP_CLIENT_ASYNC,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::AppHandle;
 
-use crate::{AppState, collections::fetch_collections};
+pub use crate::version_options::VersionDownloadOption;
+use crate::{AppState, collections::fetch_collections, version_options::prepare_options};
 
 #[tauri::command]
 pub async fn fetch_library(
@@ -266,38 +267,9 @@ pub async fn fetch_game_logic(
     Ok(data)
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct VersionDownloadOptionRequiredContent {
-    game_id: String,
-    version_id: String,
-    name: String,
-    icon_object_id: String,
-    short_description: String,
-    size: GameSize,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VersionDownloadOption {
-    pub game_id: String,
-    pub version_id: String,
-    display_name: Option<String>,
-    version_path: String,
-    pub platform: Platform,
-    size: GameSize,
-    required_content: Vec<VersionDownloadOptionRequiredContent>,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GameSize {
-    install_size: usize,
-    download_size: usize,
-}
-
 pub async fn fetch_game_version_options_logic(
     game_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    _state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<Vec<VersionDownloadOption>, RemoteAccessError> {
     if borrow_db_checked().applications.local_games.contains_key(&game_id) {
         return Ok(vec![]);
@@ -328,17 +300,11 @@ pub async fn fetch_game_version_options_logic(
 
     let data: Vec<VersionDownloadOption> = response.json().await?;
 
-    let state_lock = state.lock();
-    let process_manager_lock = PROCESS_MANAGER.lock();
-    let data: Vec<VersionDownloadOption> = data
-        .into_iter()
-        .filter(|v| process_manager_lock.valid_platform(&v.platform))
-        .collect();
-    //data.dedup_by_key(|v| v.platform);
-    drop(process_manager_lock);
-    drop(state_lock);
-
-    Ok(data)
+    let installed = borrow_db_checked().applications.installed_game_version
+        .get(&game_id)
+        .map(|meta| meta.target_platform);
+    let proton_ready = PROCESS_MANAGER.lock().proton_ready(&game_id);
+    Ok(prepare_options(data, Platform::HOST, installed, proton_ready))
 }
 
 pub async fn fetch_game_logic_offline(

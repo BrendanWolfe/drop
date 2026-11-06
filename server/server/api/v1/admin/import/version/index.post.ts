@@ -16,6 +16,7 @@ export const ImportVersion = type({
 
   launches: type({
     platform: type.valueOf(Platform),
+    protonCompatible: "boolean?",
     name: "string",
     launch: "string",
     umuId: "string?",
@@ -26,6 +27,7 @@ export const ImportVersion = type({
 
   setups: type({
     platform: type.valueOf(Platform),
+    protonCompatible: "boolean?",
     launch: "string",
   }).array(),
 

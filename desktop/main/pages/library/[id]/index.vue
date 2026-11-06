@@ -232,6 +232,41 @@
       </div>
 
       <div class="space-y-6">
+        <div v-if="buildOptions.length">
+          <label
+            for="install-build"
+            class="block text-sm/6 font-medium text-zinc-100"
+            >Build</label
+          >
+          <select
+            id="install-build"
+            v-model="installPlatform"
+            class="mt-2 min-h-10 w-full rounded-md border-zinc-700 bg-zinc-800 text-sm text-zinc-100 focus:border-blue-600 focus:ring-blue-600"
+            @change="installVersionIndex = -1"
+          >
+            <option
+              v-if="
+                !buildOptions.some(
+                  (option) => option.platform === installPlatform,
+                )
+              "
+              :value="installPlatform"
+            >
+              {{ installPlatform }} — Installed build (unavailable)
+            </option>
+            <option
+              v-for="option in buildOptions"
+              :key="option.platform"
+              :value="option.platform"
+            >
+              {{ buildLabel(option) }}
+            </option>
+          </select>
+          <p class="mt-2 text-xs text-zinc-400">
+            Linux builds run natively. Windows builds marked for Proton run
+            through Proton on Linux.
+          </p>
+        </div>
         <div v-if="versionOptions && versionOptions.length > 0">
           <Listbox as="div" v-model="installVersionIndex">
             <ListboxLabel class="block text-sm/6 font-medium text-zinc-100"
@@ -267,9 +302,10 @@
                   </div>
                   <div class="ml-2 flex-1 md:flex md:justify-between">
                     <p class="text-xs text-blue-300">
-                      "Latest" will notify you when there is a new version
-                      available. Choose another version to pin this game's
-                      version.
+                      "Latest" notifies you about new versions of the selected
+                      build. It will not switch between native Linux and
+                      Windows/Proton. Choose a specific version to disable
+                      update notifications.
                     </p>
                   </div>
                 </div>
@@ -340,7 +376,7 @@
                   <ListboxOption
                     as="template"
                     v-for="(version, versionIdx) in versionOptions"
-                    :key="version.versionId"
+                    :key="`${version.versionId}-${version.platform}`"
                     :value="versionIdx"
                     v-slot="{ active, selected }"
                   >
@@ -412,6 +448,20 @@
             </svg>
             <span class="sr-only">Loading...</span>
           </div>
+        </div>
+        <div
+          v-if="currentVersionOption?.protonSetupRequired"
+          role="status"
+          class="rounded-md bg-amber-500/10 p-3 text-sm text-amber-200"
+        >
+          <p class="font-semibold">Proton setup required</p>
+          <p class="mt-1">
+            You can download this Windows build now. Before playing, install
+            umu-run and select a Proton version in
+            <NuxtLink to="/settings/compat" class="underline underline-offset-2"
+              >Settings → Compatibility</NuxtLink
+            >.
+          </p>
         </div>
         <div v-if="installDirs">
           <InstallDirectorySelector
@@ -671,6 +721,11 @@ import { InstalledType } from "~/types";
 import { renderGameDescription } from "~/utils/game-description";
 import { canStartStoreDownload } from "~/utils/store-download";
 import { gameInstallPlan } from "~/utils/emulator-install";
+import {
+  availableBuilds,
+  buildLabel,
+  versionsForBuild,
+} from "~/utils/version-options";
 
 const route = useRoute();
 const router = useRouter();
@@ -687,7 +742,16 @@ function formatPlaytime(seconds: number): string {
 }
 
 const installFlowOpen = ref(false);
-const versionOptions = ref<undefined | Array<VersionOption>>();
+const allVersionOptions = ref<undefined | Array<VersionOption>>();
+const installPlatform = ref("");
+const buildOptions = computed(() =>
+  availableBuilds(allVersionOptions.value ?? []),
+);
+const versionOptions = computed(
+  () =>
+    allVersionOptions.value &&
+    versionsForBuild(allVersionOptions.value, installPlatform.value),
+);
 const installDirs = ref<undefined | Array<string>>();
 const currentImageIndex = ref(0);
 
@@ -695,18 +759,21 @@ const configureModalOpen = ref(false);
 
 async function installFlow() {
   installFlowOpen.value = true;
-  versionOptions.value = undefined;
+  allVersionOptions.value = undefined;
   installDirs.value = undefined;
   installError.value = undefined;
 
   try {
-    versionOptions.value = await invoke("fetch_game_version_options", {
+    allVersionOptions.value = await invoke("fetch_game_version_options", {
       gameId: game.id,
     });
+    const first = allVersionOptions.value?.[0];
+    installPlatform.value = first?.installedPlatform ?? first?.platform ?? "";
+    installVersionIndex.value = -1;
     installDirs.value = await invoke("fetch_download_dir_stats");
   } catch (error) {
     installError.value = (error as string).toString();
-    versionOptions.value = undefined;
+    allVersionOptions.value = undefined;
   }
 }
 
@@ -782,7 +849,7 @@ function formatVersionOptionText(index: number) {
   if (!versionOptions.value) return undefined;
   const versionOption = versionOptions.value[Math.max(index, 0)];
   if (!versionOption) return undefined;
-  const template = `${versionOption.displayName || versionOption.versionPath} on ${versionOption.platform}, ${formatKilobytes(versionOption.size.installSize / 1024)}B`;
+  const template = `${versionOption.displayName || versionOption.versionPath} · ${buildLabel(versionOption)}, ${formatKilobytes(versionOption.size.installSize / 1024)}B`;
   if (index == -1) {
     return `Latest (${template})`;
   }
@@ -871,7 +938,7 @@ async function launch(direct = false) {
 }
 
 const dependencyRequiredModal = ref<
-  { gameId: string; versionId: string } | undefined
+  { gameId: string; versionId: string; platform: string } | undefined
 >(undefined);
 
 async function launchIndex(index: number) {
@@ -885,6 +952,7 @@ async function launchIndex(index: number) {
       dependencyRequiredModal.value = {
         gameId: result.data[0],
         versionId: result.data[1],
+        platform: result.data[2],
       };
     }
   } catch (e) {

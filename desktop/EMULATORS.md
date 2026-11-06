@@ -64,6 +64,10 @@ downloaded automatically; supply legally obtained files where required.
 
 ## Desktop behavior
 
+Linux emulator launches must contain native Linux executables. To offer a Windows
+emulator through Proton, enable **Allow on Linux using Proton** on both its Windows
+launch and the game's referencing Windows launch. See [Native builds and Proton](PLATFORMS.md).
+
 The normal install flow queues required emulator versions automatically, with
 automatic updates **disabled** for the emulator so the game's version pin cannot
 silently change. Launch verifies the installed version/platform and requests the

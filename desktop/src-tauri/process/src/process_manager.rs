@@ -260,6 +260,37 @@ impl ProcessManager<'_> {
         process_handler.is_ok()
     }
 
+    pub fn proton_ready(&self, game_id: &str) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            let db = borrow_db_checked();
+            if self
+                .fetch_process_handler(&db, &Platform::Windows, None)
+                .is_err()
+            {
+                return false;
+            }
+            let configuration = db.applications.installed_game_version
+                .get(game_id)
+                .and_then(|meta| db.applications.game_versions.get(&meta.version))
+                .map(|version| &version.user_configuration);
+            let path = configuration
+                .and_then(|config| config.override_proton_path.as_ref())
+                .or(db.applications.default_proton_path.as_ref());
+            path.is_some_and(|path| {
+                crate::compat::read_proton_path(path.into())
+                    .ok()
+                    .flatten()
+                    .is_some()
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = game_id;
+            false
+        }
+    }
+
     pub fn get_process_handlers(
         &self,
         game_id: String,
@@ -314,6 +345,7 @@ impl ProcessManager<'_> {
             .launches
             .iter()
             .filter(|v| v.platform == meta.target_platform)
+            .filter(|v| v.platform.can_run_on(Platform::HOST, v.proton_compatible))
             .map(|v| LaunchOption {
                 name: v.name.clone(),
             })
@@ -401,11 +433,19 @@ impl ProcessManager<'_> {
 
         let target_platform = meta.target_platform;
 
-        let mut process_handler = self.fetch_process_handler(
-            &db_lock,
-            &target_platform,
-            game_version.user_configuration.override_handler.as_deref(),
-        )?;
+        let mut process_handler = self
+            .fetch_process_handler(
+                &db_lock,
+                &target_platform,
+                game_version.user_configuration.override_handler.as_deref(),
+            )
+            .map_err(|error| {
+                if Platform::HOST == Platform::Linux && target_platform == Platform::Windows {
+                    ProcessError::NoCompat
+                } else {
+                    error
+                }
+            })?;
         debug!("using process handler {:?}", process_handler.id());
 
         let (target_command, emulator) = match game_status {
@@ -417,6 +457,7 @@ impl ProcessManager<'_> {
                     .launches
                     .iter()
                     .filter(|v| v.platform == target_platform)
+                    .filter(|v| v.platform.can_run_on(Platform::HOST, v.proton_compatible))
                     .enumerate()
                     .find(|(i, _)| *i == launch_process_index)
                     .ok_or(ProcessError::NotInstalled)?;
@@ -432,7 +473,10 @@ impl ProcessManager<'_> {
                 let setup_config = game_version
                     .setups
                     .iter()
-                    .find(|v| v.platform == target_platform)
+                    .find(|v| {
+                        v.platform == target_platform
+                            && v.platform.can_run_on(Platform::HOST, v.proton_compatible)
+                    })
                     .ok_or(ProcessError::NotInstalled)?;
 
                 (setup_config.command.clone(), None)
@@ -447,6 +491,7 @@ impl ProcessManager<'_> {
             let err = ProcessError::RequiredDependency(
                 emulator.game_id.clone(),
                 emulator.version_id.clone(),
+                target_platform,
             );
 
             let emulator_metadata = db_lock
@@ -484,6 +529,7 @@ impl ProcessManager<'_> {
                 .iter()
                 .find(|v| v.launch_id == emulator.launch_id)
                 .filter(|v| v.platform == target_platform)
+                .filter(|v| v.platform.can_run_on(Platform::HOST, v.proton_compatible))
                 .ok_or(err)?;
 
             let exe_command = crate::emulator::prepare(

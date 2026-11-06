@@ -709,6 +709,11 @@
     "title": "Latest News"
   },
   "options": "Options",
+  "proton": {
+    "allowLinux": "Allow on Linux using Proton",
+    "eligibilityHelp": "Makes this Windows build available on Linux through Proton. This does not mean compatibility has been tested. Linux builds are for native Linux executables.",
+    "saveError": "Could not save Proton eligibility. Please try again."
+  },
   "selectLanguage": "Select language",
   "services": {
     "nginx": {
