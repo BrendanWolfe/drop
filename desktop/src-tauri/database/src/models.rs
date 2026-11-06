@@ -26,6 +26,9 @@ pub mod data {
     pub type ArchiveState = v1::ArchiveState;
     pub type LaunchConfiguration = v1::LaunchConfiguration;
     pub type LaunchConfigurationEmulator = v1::LaunchConfigurationEmulator;
+    pub type EmulatorProfile = v1::EmulatorProfile;
+    pub type EmulatorLaunchMode = v1::EmulatorLaunchMode;
+    pub type EmulatorConfigFile = v1::EmulatorConfigFile;
 
     use std::collections::HashMap;
 
@@ -142,6 +145,28 @@ pub mod data {
             pub umu_id_override: Option<String>,
 
             pub emulator: Option<LaunchConfigurationEmulator>,
+            #[serde(default)]
+            pub emulator_profile: Option<EmulatorProfile>,
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+        #[serde(rename_all = "camelCase")]
+        pub struct EmulatorProfile {
+            pub mode: EmulatorLaunchMode,
+            pub config_files: Vec<EmulatorConfigFile>,
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+        #[serde(rename_all = "lowercase")]
+        pub enum EmulatorLaunchMode {
+            Cli,
+            Ui,
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+        pub struct EmulatorConfigFile {
+            pub path: String,
+            pub content: String,
         }
 
         #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -395,6 +420,26 @@ pub mod data {
     #[cfg(test)]
     mod tests {
         use super::{Database, InstalledGameType, Settings, UserConfiguration};
+
+        #[test]
+        fn legacy_launches_default_to_no_emulator_profile() {
+            let launch: super::LaunchConfiguration = ron::from_str(
+                r#"(launchId:"launch",name:"Play",command:"emulator '{rom}'",platform:Linux,umuIdOverride:None,emulator:None)"#,
+            )
+            .unwrap();
+            assert!(launch.emulator_profile.is_none());
+            let mut launch = launch;
+            launch.emulator_profile = Some(super::EmulatorProfile {
+                mode: super::EmulatorLaunchMode::Ui,
+                config_files: vec![super::EmulatorConfigFile {
+                    path: "settings.json".into(),
+                    content: "{gameDir:json}".into(),
+                }],
+            });
+            let encoded = ron::to_string(&launch).unwrap();
+            let decoded: super::LaunchConfiguration = ron::from_str(&encoded).unwrap();
+            assert_eq!(decoded, launch);
+        }
 
         #[test]
         fn legacy_database_defaults_to_no_proxy_authentication() {

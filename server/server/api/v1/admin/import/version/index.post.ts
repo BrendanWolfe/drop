@@ -3,6 +3,7 @@ import { Platform } from "~/prisma/client/enums";
 import { readDropValidatedBody, throwingArktype } from "~/server/arktype";
 import aclManager from "~/server/internal/acls";
 import libraryManager from "~/server/internal/library";
+import { EmulatorProfile } from "~/server/internal/library/emulator-profile";
 
 export const ImportVersion = type({
   id: "string",
@@ -20,6 +21,7 @@ export const ImportVersion = type({
     umuId: "string?",
     emulatorId: "string?",
     suggestions: "string[]?",
+    "emulatorProfile?": EmulatorProfile,
   }).array(),
 
   setups: type({

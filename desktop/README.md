@@ -12,17 +12,34 @@ launch preferences, safe updates, deferred cleanup and launch limitations.
 
 This fork builds desktop installers for Windows x64 and Linux x64/ARM64 only.
 The release workflow does not build macOS, AUR, Arch Linux, or Flatpak packages.
-Manually dispatched runs default to a distinct `v<VERSION>-build.<RUN_NUMBER>`
-pre-release tag when no tag is supplied. Published releases retain their tag,
-release notes, and pre-release flag.
+Pushes to `develop` publish testing prereleases (`v<VERSION>-dev.<RUN_NUMBER>`).
+Pushes to `main` publish stable releases (`v<VERSION>+build.<RUN_NUMBER>`).
+Both branches also support manual workflow runs with an optional custom tag.
+Other branches and tag-based manual runs cannot publish releases.
+
+Automatic releases stay drafts until all desktop platforms finish successfully.
+Only stable `main` releases publish `latest.json` and become GitHub's latest
+release. Development prereleases have downloadable installers, but no automatic
+update manifest. Tags are pinned to the actual build commit before release
+creation, and release metadata records the originating branch.
+
+Existing published releases can trigger builds too, but must target `main`
+(stable) or `develop` (prerelease), and their tagged commit must belong to that
+branch. Existing published tags cannot be reused for a new manual/push build.
+See [the repository release process](../RELEASING.md) for promotion instructions.
+
+Development installers must be downloaded and installed manually. Emulator
+testing also needs the matching development server; see [portable emulators](EMULATORS.md).
 
 ## Desktop updates
 
 Packaged clients check `BrendanWolfe/drop` on startup and every 30 minutes,
-independently of the configured Drop server. The newest published release with a
-`latest.json` asset is used (including build pre-releases); drafts and releases
-without desktop update artifacts are ignored. Only the most recent 100 releases
-are inspected. A failed check or download is retried after five minutes.
+independently of the configured Drop server. GitHub's latest stable release with a
+`latest.json` asset is used only when it is **not** a prerelease and its GitHub
+target branch is **main**. Drafts, development builds, legacy SHA-targeted
+releases, and releases without desktop update artifacts are ignored. If GitHub's
+latest release is not eligible, the most recent 100 releases are inspected for a
+stable main desktop release. A failed check or download is retried after five minutes.
 
 Updates download automatically and are signature-verified before the blue
 **Update and restart** button appears immediately left of Downloads. Nothing is
@@ -62,6 +79,6 @@ Local release packages that should receive updates must set
 key is intentionally supplied at build time rather than downloaded from GitHub.
 
 New release tags can update an existing build with the same application version
-(for example, `v0.4.5-build.1` to `v0.4.5-build.2`). The installed tag is never
+(for example, `v0.4.5+build.1` to `v0.4.5+build.2`). The installed tag is never
 offered again, and lower application versions are rejected. Releases should not
 be republished under an existing tag; publish a new tag for a new build.

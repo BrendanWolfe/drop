@@ -149,6 +149,23 @@
         </div>
       </fieldset>
 
+      <label
+        v-if="importMode === 'Game'"
+        class="flex items-start gap-3 rounded-xl bg-zinc-800 p-4 text-sm text-zinc-100"
+      >
+        <input
+          v-model="isEmulated"
+          type="checkbox"
+          class="mt-1 rounded border-zinc-600 bg-zinc-950 text-blue-600 focus:ring-blue-500"
+        />
+        <span
+          >{{ $t("emulators.emulatedGame")
+          }}<span class="mt-1 block text-xs text-zinc-400">{{
+            $t("emulators.emulatedGameHelp")
+          }}</span></span
+        >
+      </label>
+
       <!-- without metadata option -->
       <div>
         <LoadingButton
@@ -435,7 +452,10 @@ const router = useRouter();
 
 const importLoading = ref(false);
 const importError = ref<string | undefined>();
-const importMode = ref<GameType>("Game");
+const importMode = ref<GameType>(
+  useRoute().query.type === "Emulator" ? "Emulator" : "Game",
+);
+const isEmulated = ref(false);
 async function importGame(useMetadata: boolean) {
   if (!metadataResults.value && useMetadata) return;
 
@@ -452,6 +472,7 @@ async function importGame(useMetadata: boolean) {
       library: option.library.id,
       metadata,
       type: importMode.value,
+      isEmulated: importMode.value === "Game" && isEmulated.value,
     },
   });
 

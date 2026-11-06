@@ -91,6 +91,8 @@ export default defineClientEventHandler(async (h3) => {
           if ("emulator" in launch && launch.emulator) {
             const old = platformOptions.get(launch.platform)!;
             const gv = launch.emulator.gameVersion;
+            if (old.some((content) => content.versionId === gv.versionId))
+              continue;
             old.push({
               gameId: gv.game.id,
               versionId: gv.versionId,

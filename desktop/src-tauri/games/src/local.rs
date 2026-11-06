@@ -72,6 +72,7 @@ pub fn register(db: &mut Database, local: LocalGame, command: Option<String>) {
             platform: local.platform,
             umu_id_override: None,
             emulator: None,
+            emulator_profile: None,
         })
         .into_iter()
         .collect();

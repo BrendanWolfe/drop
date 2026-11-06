@@ -16,7 +16,12 @@ export default defineEventHandler(async (h3) => {
 
   const game = await prisma.game.findUnique({
     where: { id: gameId },
-    select: { libraryId: true, libraryPath: true, type: true },
+    select: {
+      libraryId: true,
+      libraryPath: true,
+      type: true,
+      isEmulated: true,
+    },
   });
   if (!game || !game.libraryId)
     throw createError({ statusCode: 404, statusMessage: "Game not found" });
@@ -28,5 +33,9 @@ export default defineEventHandler(async (h3) => {
   if (!unimportedVersions)
     throw createError({ statusCode: 400, statusMessage: "Invalid game ID" });
 
-  return { versions: unimportedVersions, type: game.type };
+  return {
+    versions: unimportedVersions,
+    type: game.type,
+    isEmulated: game.isEmulated,
+  };
 });

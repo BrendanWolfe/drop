@@ -426,24 +426,16 @@
           "
         >
           <div class="border-b border-white/10 py-2">
-            <h3 class="text-sm font-semibold text-white">
-              Install additional dependencies?
-            </h3>
+            <h3 class="text-sm font-semibold text-white">Required emulators</h3>
             <p class="mt-1 text-xs text-gray-400">
-              This game requires additional content to run. Click the components
-              to automatically queue for download.
+              Drop will install these exact emulator versions automatically.
             </p>
           </div>
           <ul role="list" class="mt-2 divide-y divide-white/5">
             <li
               v-for="content in currentVersionOption.requiredContent"
               :key="content.versionId"
-              :class="[
-                !installDepsDisabled[content.versionId]
-                  ? 'bg-zinc-950 ring-2 ring-zinc-800'
-                  : '',
-                'rounded-lg relative flex justify-between px-2 py-3',
-              ]"
+              class="rounded-lg relative flex justify-between bg-zinc-950 ring-2 ring-zinc-800 px-2 py-3"
             >
               <div class="flex min-w-0 gap-x-2">
                 <img
@@ -453,16 +445,7 @@
                 />
                 <div class="min-w-0 flex-auto">
                   <p class="text-sm/6 font-semibold text-white">
-                    <button
-                      @click="
-                        () =>
-                          (installDepsDisabled[content.versionId] =
-                            !installDepsDisabled[content.versionId])
-                      "
-                    >
-                      <span class="absolute inset-x-0 -top-px bottom-0"></span>
-                      {{ content.name }}
-                    </button>
+                    {{ content.name }}
                   </p>
                   <p class="mt-1 flex text-xs/5 text-gray-400">
                     {{ content.shortDescription }}
@@ -479,13 +462,7 @@
                   </p>
                 </div>
                 <CheckIcon
-                  v-if="!installDepsDisabled[content.versionId]"
                   class="size-5 flex-none text-green-500"
-                  aria-hidden="true"
-                />
-                <MinusIcon
-                  v-else
-                  class="size-5 flex-none text-gray-500"
                   aria-hidden="true"
                 />
               </div>
@@ -686,7 +663,6 @@ import {
   ArrowDownTrayIcon,
   CheckCircleIcon,
   MapPinIcon,
-  MinusIcon,
   ServerIcon,
   XCircleIcon,
 } from "@heroicons/vue/24/solid";
@@ -694,6 +670,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { InstalledType } from "~/types";
 import { renderGameDescription } from "~/utils/game-description";
 import { canStartStoreDownload } from "~/utils/store-download";
+import { gameInstallPlan } from "~/utils/emulator-install";
 
 const route = useRoute();
 const router = useRouter();
@@ -737,7 +714,6 @@ const installLoading = ref(false);
 const installError = ref<string | undefined>();
 const installVersionIndex = ref(-1);
 const installDir = ref(0);
-const installDepsDisabled = ref<{ [key: string]: boolean }>({});
 
 onMounted(async () => {
   if (route.query.download !== "1") return;
@@ -774,12 +750,11 @@ async function install() {
     if (!versionOption) throw new Error("Select a version to install");
     const isLatest = installVersionIndex.value == -1;
 
-    const games = [
+    const games = gameInstallPlan(
       { gameId: game.id, versionId: versionOption.versionId },
-      ...versionOption.requiredContent
-        .filter((v) => !installDepsDisabled.value[v.versionId])
-        .map((v) => ({ gameId: v.gameId, versionId: v.versionId })),
-    ];
+      versionOption.requiredContent,
+      isLatest,
+    );
 
     for (const game of games) {
       await invoke("download_game", {
@@ -787,7 +762,7 @@ async function install() {
         versionId: game.versionId,
         installDir: installDir.value,
         targetPlatform: versionOption.platform,
-        enableUpdates: isLatest,
+        enableUpdates: game.enableUpdates,
       });
     }
 
@@ -806,6 +781,7 @@ const currentVersionOption = computed(
 function formatVersionOptionText(index: number) {
   if (!versionOptions.value) return undefined;
   const versionOption = versionOptions.value[Math.max(index, 0)];
+  if (!versionOption) return undefined;
   const template = `${versionOption.displayName || versionOption.versionPath} on ${versionOption.platform}, ${formatKilobytes(versionOption.size.installSize / 1024)}B`;
   if (index == -1) {
     return `Latest (${template})`;

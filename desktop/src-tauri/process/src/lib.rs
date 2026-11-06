@@ -17,6 +17,7 @@ pub static PROCESS_MANAGER: ProcessManagerWrapper = ProcessManagerWrapper::new()
 #[cfg(target_os = "linux")]
 pub mod compat;
 pub mod error;
+mod emulator;
 pub mod format;
 mod parser;
 pub mod resolution;

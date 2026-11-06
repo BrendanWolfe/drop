@@ -142,7 +142,10 @@
         </Combobox>
       </div>
       <div
-        v-if="props.type && props.type === 'Emulator'"
+        v-if="
+          props.type === 'Emulator' &&
+          launchConfiguration.emulatorProfile?.mode !== 'ui'
+        "
         class="ml-1 mt-2 rounded-lg bg-blue-900/10 p-1 outline outline-blue-900"
       >
         <div class="flex items-center">
@@ -207,6 +210,7 @@
       </div>
     </div>
     <div v-if="props.type && props.type === 'Emulator'">
+      <EmulatorProfileEditor v-model="launchConfiguration.emulatorProfile" />
       <p class="block text-sm font-medium leading-6 text-zinc-100">
         {{ $t("library.admin.launchRow.autosuggestHint") }}
       </p>
@@ -257,7 +261,7 @@ const emulator = computed({
     if (v) {
       launchConfiguration.value.emulatorId = v.launchId;
     } else {
-      launchConfiguration.value.emulatorId = undefined;
+      delete launchConfiguration.value.emulatorId;
     }
   },
 });
@@ -279,8 +283,13 @@ const props = defineProps<{
   type?: GameType;
 }>();
 
-if (props.type && props.type === "Emulator")
+if (props.type && props.type === "Emulator") {
   launchConfiguration.value.suggestions ??= [];
+  launchConfiguration.value.emulatorProfile ??= {
+    mode: "cli",
+    configFiles: [],
+  };
+}
 
 const selectLaunchOpen = ref(false);
 
@@ -316,7 +325,7 @@ function updateLaunchCommand(command: string) {
           launchId: autosetGuess.emulatorId,
           gameName: autosetGuess.gameName,
           gameIcon: autosetGuess.icon,
-          versionName: autosetGuess.launchName,
+          versionName: autosetGuess.versionName,
           launchName: autosetGuess.launchName,
           platform: autosetGuess.platform,
         } satisfies EmulatorLaunchObject;

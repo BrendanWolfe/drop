@@ -36,7 +36,7 @@ export default defineClientEventHandler(async (h3) => {
     },
   });
 
-  if (!gameVersion)
+  if (!gameVersion || gameVersion.gameId !== id)
     throw createError({
       statusCode: 404,
       statusMessage: "Game version not found",

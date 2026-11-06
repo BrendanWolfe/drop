@@ -1,5 +1,11 @@
 <template>
   <div class="flex flex-col gap-y-4 sm:max-w-[40rem]">
+    <p
+      v-if="isEmulated"
+      class="rounded-xl bg-blue-600/10 p-4 text-sm text-blue-200"
+    >
+      {{ $t("emulators.versionHelp") }}
+    </p>
     <Listbox
       as="div"
       :model-value="currentlySelectedVersion"
@@ -376,7 +382,7 @@ const router = useRouter();
 const { t } = useI18n();
 const route = useRoute();
 const gameId = route.params.id.toString();
-const { versions, type } = await $dropFetch(
+const { versions, type, isEmulated } = await $dropFetch(
   `/api/v1/admin/import/version?id=${encodeURIComponent(gameId)}`,
 );
 const currentlySelectedVersion = ref(-1);
