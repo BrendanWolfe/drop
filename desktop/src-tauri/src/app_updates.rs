@@ -6,13 +6,16 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 use tempfile::NamedTempFile;
 
+mod release_policy;
+use release_policy::{Release, newest_release, should_offer_update};
+
 const RELEASES_API: &str = "https://api.github.com/repos/BrendanWolfe/drop/releases?per_page=100";
+const STABLE_RELEASE_API: &str = "https://api.github.com/repos/BrendanWolfe/drop/releases/latest";
 const PUBLIC_KEY: Option<&str> = option_env!("DROP_UPDATER_PUBLIC_KEY");
 const RELEASE_TAG: Option<&str> = option_env!("DROP_RELEASE_TAG");
 const EVENT: &str = "desktop-update";
@@ -58,40 +61,6 @@ impl DesktopUpdater {
         *self.status.lock() = status.clone();
         let _ = app.emit(EVENT, status);
     }
-}
-
-#[derive(Deserialize)]
-struct Release {
-    tag_name: String,
-    draft: bool,
-    published_at: Option<String>,
-    assets: Vec<Asset>,
-}
-
-#[derive(Deserialize)]
-struct Asset {
-    name: String,
-    browser_download_url: String,
-}
-
-fn newest_release(releases: &[Release]) -> Option<&Release> {
-    releases
-        .iter()
-        .filter(|release| {
-            !release.draft
-                && release.published_at.is_some()
-                && release
-                    .assets
-                    .iter()
-                    .any(|asset| asset.name == "latest.json")
-        })
-        .max_by_key(|release| &release.published_at)
-}
-
-fn should_offer_update(current: &Version, remote: &Version, tag: &str, current_tag: &str) -> bool {
-    // This fork also publishes rebuilds without bumping the application version.
-    // The embedded release tag prevents repeatedly offering the installed rebuild.
-    tag != current_tag && remote >= current
 }
 
 fn disabled_reason() -> Option<&'static str> {
@@ -182,17 +151,33 @@ async fn download_latest(
     state: &DesktopUpdater,
 ) -> Result<Option<PreparedUpdate>> {
     // Use a separate unauthenticated client: never forward Drop server credentials to GitHub.
-    let releases: Vec<Release> = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent(concat!("Drop-Desktop/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(30))
-        .build()?
-        .get(RELEASES_API)
+        .build()?;
+    // Frequent develop builds cannot crowd the current stable release out of
+    // the first page. Still verify the branch and prerelease flag ourselves.
+    let latest = client
+        .get(STABLE_RELEASE_API)
         .header("Accept", "application/vnd.github+json")
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    let mut releases: Vec<Release> = if latest.status() == reqwest::StatusCode::NOT_FOUND {
+        vec![]
+    } else {
+        vec![latest.error_for_status()?.json().await?]
+    };
+    if newest_release(&releases).is_none() {
+        // Ignore server-only and legacy releases, even if designated latest.
+        releases = client
+            .get(RELEASES_API)
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+    }
     let Some(release) = newest_release(&releases) else {
         return Ok(None);
     };
@@ -321,69 +306,6 @@ async fn finish_downloads() {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn release(tag: &str, date: &str, draft: bool, manifest: bool) -> Release {
-        Release {
-            tag_name: tag.into(),
-            draft,
-            published_at: Some(date.into()),
-            assets: if manifest {
-                vec![Asset {
-                    name: "latest.json".into(),
-                    browser_download_url: "https://github.com/test/latest.json".into(),
-                }]
-            } else {
-                vec![]
-            },
-        }
-    }
-
-    #[test]
-    fn selects_newest_published_desktop_release_not_server_or_draft() {
-        let releases = vec![
-            release("server", "2026-11-05T00:00:00Z", false, false),
-            release("draft", "2026-11-06T00:00:00Z", true, true),
-            release("v0.4.5-build.9", "2026-11-04T00:00:00Z", false, true),
-            release("v0.4.6", "2026-11-03T00:00:00Z", false, true),
-        ];
-        assert_eq!(
-            newest_release(&releases).unwrap().tag_name,
-            "v0.4.5-build.9"
-        );
-        assert!(newest_release(&[]).is_none());
-        let mut unpublished = release("unpublished", "2026-11-07T00:00:00Z", false, true);
-        unpublished.published_at = None;
-        assert!(newest_release(&[unpublished]).is_none());
-    }
-
-    #[test]
-    fn offers_new_versions_and_rebuilds_but_not_installed_tags_or_downgrades() {
-        let current = Version::parse("0.4.5").unwrap();
-        assert!(should_offer_update(
-            &current,
-            &Version::parse("0.4.6").unwrap(),
-            "v0.4.6",
-            "v0.4.5"
-        ));
-        assert!(should_offer_update(
-            &current,
-            &current,
-            "v0.4.5-build.2",
-            "v0.4.5-build.1"
-        ));
-        assert!(!should_offer_update(
-            &current,
-            &current,
-            "v0.4.5-build.2",
-            "v0.4.5-build.2"
-        ));
-        assert!(!should_offer_update(
-            &current,
-            &Version::parse("0.4.4").unwrap(),
-            "v0.4.4",
-            "v0.4.5"
-        ));
-    }
 
     #[test]
     fn status_wire_format_matches_the_header_widget() {

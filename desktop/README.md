@@ -13,16 +13,22 @@ launch preferences, safe updates, deferred cleanup and launch limitations.
 This fork builds desktop installers for Windows x64 and Linux x64/ARM64 only.
 The release workflow does not build macOS, AUR, Arch Linux, or Flatpak packages.
 Manually dispatched runs default to a distinct `v<VERSION>-build.<RUN_NUMBER>`
-pre-release tag when no tag is supplied. Published releases retain their tag,
-release notes, and pre-release flag.
+tag when no tag is supplied. Builds on `main` become stable releases only after
+all platforms finish. Other manual builds remain drafts/prereleases and omit the
+automatic-update manifest. Published releases retain their tag and release notes.
 
 ## Desktop updates
 
 Packaged clients check `BrendanWolfe/drop` on startup and every 30 minutes,
-independently of the configured Drop server. The newest published release with a
-`latest.json` asset is used (including build pre-releases); drafts and releases
-without desktop update artifacts are ignored. Only the most recent 100 releases
-are inspected. A failed check or download is retried after five minutes.
+independently of the configured Drop server. Only published, non-prerelease
+releases targeting `main` with a `latest.json` asset are eligible. The checker
+uses GitHub's latest stable release first, with a fallback to the most recent
+100 releases. Drafts, development releases, server-only releases, and legacy
+SHA-targeted releases are ignored. Failed checks retry after five minutes.
+
+The `v0.4.5+updater.1` bridge release changes only desktop update selection and
+the release plumbing needed to ship it. Existing signed-update clients accept
+its new tag at the same app version and then follow stable main releases only.
 
 Updates download automatically and are signature-verified before the blue
 **Update and restart** button appears immediately left of Downloads. Nothing is

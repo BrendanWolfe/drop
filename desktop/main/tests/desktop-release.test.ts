@@ -75,3 +75,22 @@ test("explicit release tags resolve the version placeholder", () => {
 test("release tags cannot inject extra GitHub environment variables", () => {
   assert.throws(() => configureRelease("v0.4.5\nOTHER=value"));
 });
+
+test("the updater bridge remains a draft until all platforms finish, then targets stable main", () => {
+  assert.ok(
+    workflow.includes("releaseDraft: ${{ github.event_name != 'release' }}"),
+  );
+  assert.ok(workflow.includes("includeUpdaterJson:"));
+  assert.ok(workflow.includes("needs: publish-tauri"));
+  assert.ok(
+    workflow.includes(
+      "if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
+    ),
+  );
+  assert.ok(
+    workflow.includes(
+      "--target main --draft=false --prerelease=false --latest",
+    ),
+  );
+  assert.ok(workflow.includes("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"));
+});
