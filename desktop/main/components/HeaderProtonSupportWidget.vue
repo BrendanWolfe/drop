@@ -5,7 +5,7 @@
   >
     <HeaderWidget :problem="protonError">
       <img
-        src="/proton-logo.png"
+        :src="protonLogoUrl"
         class="relative z-50 size-5 brightness-[30%]"
       />
     </HeaderWidget>
@@ -14,6 +14,7 @@
 
 <script setup lang="ts">
 const appState = useAppState();
+const protonLogoUrl = `${useRuntimeConfig().app.baseURL.replace(/\/?$/, "/")}proton-logo.png`;
 const onLinux = appState.value?.umuState !== "NotNeeded";
 const paths = onLinux ? await useProtonPaths() : undefined;
 
