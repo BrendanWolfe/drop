@@ -88,15 +88,18 @@ test("native game installation retains its existing update choice", () => {
   ]);
 });
 
-test("legacy conflicting dependencies fail before changing an installation", () => {
-  assert.throws(
-    () =>
-      gameInstallPlan(
-        game,
-        [emulator, { ...emulator, versionId: "different" }],
-        true,
-      ),
-    /conflicting/,
+test("different versions of the same emulator install side by side", () => {
+  assert.deepEqual(
+    gameInstallPlan(
+      game,
+      [emulator, { ...emulator, versionId: "different" }],
+      true,
+    ),
+    [
+      { ...emulator, enableUpdates: false },
+      { ...emulator, versionId: "different", enableUpdates: false },
+      { ...game, enableUpdates: true },
+    ],
   );
   assert.throws(() => gameInstallPlan(game, [game], true), /conflicting/);
 });

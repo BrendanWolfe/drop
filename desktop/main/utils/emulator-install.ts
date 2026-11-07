@@ -10,17 +10,19 @@ export function gameInstallPlan(
   dependencies: readonly PackageVersion[],
   enableUpdates: boolean,
 ): Array<PackageVersion & { enableUpdates: boolean }> {
-  const versions = new Map<string, { versionId: string; installed: boolean }>();
+  const versions = new Map<
+    string,
+    { gameId: string; versionId: string; installed: boolean }
+  >();
   for (const dependency of dependencies) {
-    const previous = versions.get(dependency.gameId);
-    if (
-      dependency.gameId === game.gameId ||
-      (previous !== undefined && previous.versionId !== dependency.versionId)
-    )
+    const key = JSON.stringify([dependency.gameId, dependency.versionId]);
+    const previous = versions.get(key);
+    if (dependency.gameId === game.gameId)
       throw new Error(
         "This game requires conflicting emulator versions. Ask your administrator to update its launch options.",
       );
-    versions.set(dependency.gameId, {
+    versions.set(key, {
+      gameId: dependency.gameId,
       versionId: dependency.versionId,
       installed:
         Boolean(dependency.installedPath) && (previous?.installed ?? true),
@@ -29,7 +31,7 @@ export function gameInstallPlan(
   return [
     ...Array.from(versions)
       .filter(([, dependency]) => !dependency.installed)
-      .map(([gameId, { versionId }]) => ({
+      .map(([, { gameId, versionId }]) => ({
         gameId,
         versionId,
         enableUpdates: false,

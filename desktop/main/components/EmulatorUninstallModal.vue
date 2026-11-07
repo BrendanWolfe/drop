@@ -61,9 +61,10 @@ async function uninstall() {
   uninstalling.value = true;
   error.value = "";
   try {
-    await invoke("uninstall_game", {
+    await invoke("uninstall_emulator", {
       gameId: props.emulator.gameId,
       versionId: props.emulator.versionId,
+      targetPlatform: props.emulator.platform,
       confirmedDependencies: props.emulator.requiredBy.map(
         (game) => game.gameId,
       ),

@@ -6,17 +6,14 @@ export function emulatorRepairPlan<T extends Requirement>(
 ): T[] {
   const plan = new Map<string, T>();
   for (const requirement of requirements) {
-    const previous = plan.get(requirement.gameId);
-    if (
-      previous &&
-      (previous.versionId !== requirement.versionId ||
-        previous.platform !== requirement.platform)
-    ) {
-      throw new Error(
-        "This game requires conflicting emulator builds. Ask your administrator to update its launch options.",
-      );
-    }
-    plan.set(requirement.gameId, requirement);
+    plan.set(
+      JSON.stringify([
+        requirement.gameId,
+        requirement.versionId,
+        requirement.platform,
+      ]),
+      requirement,
+    );
   }
   return [...plan.values()];
 }

@@ -64,6 +64,9 @@ export type GameVersion = {
 export type InstalledEmulator = {
   gameId: string;
   name: string;
+  iconObjectId?: string | null;
+  bannerObjectId?: string | null;
+  shortDescription?: string | null;
   versionId: string;
   versionName: string;
   platform: string;
@@ -134,6 +137,7 @@ export type RawGameStatus = [GameStatus | null, GameStatus | null];
 
 export enum DownloadableType {
   Game = "Game",
+  Emulator = "Emulator",
   Tool = "Tool",
   DLC = "DLC",
   Mod = "Mod",
@@ -142,6 +146,7 @@ export enum DownloadableType {
 export type DownloadableMetadata = {
   id: string;
   version: string;
+  targetPlatform?: string;
   downloadType: DownloadableType;
 };
 

@@ -494,29 +494,11 @@ impl ProcessManager<'_> {
                 target_platform,
             );
 
-            let emulator_metadata = db_lock
-                .applications
-                .installed_game_version
-                .get(&emulator.game_id)
-                .ok_or(err.clone())?;
-
-            let emulator_game_status = db_lock
-                .applications
-                .game_statuses
-                .get(&emulator.game_id)
-                .ok_or(err.clone())?;
-
-            let emulator_install_dir = match emulator_game_status {
-                GameDownloadStatus::Installed {
-                    install_type: InstalledGameType::Installed,
-                    install_dir,
-                    version_id,
-                    ..
-                } if version_id == &emulator.version_id
-                    && emulator_metadata.version == emulator.version_id
-                    && emulator_metadata.target_platform == target_platform => Ok(install_dir),
-                _ => Err(err.clone()),
-            }?;
+            let (emulator_metadata, _) = games::emulators::installed_emulator(&db_lock, &emulator.game_id, &emulator.version_id, target_platform).ok_or(err.clone())?;
+            let emulator_install_dir = games::emulators::emulator_install_path(
+                &db_lock, &emulator.game_id, &emulator.version_id, target_platform,
+                std::slice::from_ref(&emulator.launch_id), Platform::HOST,
+            ).ok_or(err.clone())?;
 
             let emulator_game_version = db_lock
                 .applications
@@ -536,10 +518,10 @@ impl ProcessManager<'_> {
                 emulator_launch_config,
                 &target_command,
                 Path::new(install_dir),
-                Path::new(emulator_install_dir),
+                Path::new(&emulator_install_dir),
                 &emulator.version_id,
             )?;
-            emulator_working_directory = Some(PathBuf::from(emulator_install_dir));
+            emulator_working_directory = Some(PathBuf::from(&emulator_install_dir));
             process_handler = self.fetch_process_handler(
                 &db_lock,
                 &target_platform,
@@ -550,7 +532,7 @@ impl ProcessManager<'_> {
                 emulator_metadata,
                 exe_command.reconstruct(),
                 emulator_game_version,
-                emulator_install_dir,
+                &emulator_install_dir,
                 &db_lock,
             )?
         } else {

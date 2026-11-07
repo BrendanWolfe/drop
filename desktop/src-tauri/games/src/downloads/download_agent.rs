@@ -84,7 +84,28 @@ impl GameDownloadAgent {
 
         let base_dir_path = Path::new(&base_dir);
         info!("base dir {}", base_dir_path.display());
-        let data_base_dir_path = base_dir_path.join(game_name);
+        let data_base_dir_path = if metadata.download_type == database::DownloadType::Emulator {
+            // Existing exact builds (including legacy folders) resume in place.
+            let db = borrow_db_checked();
+            match db
+                .applications
+                .emulator_installation(&metadata.id, &metadata.version, metadata.target_platform)
+                .map(|install| &install.status)
+            {
+                Some(database::GameDownloadStatus::Installed { install_dir, .. }) => {
+                    PathBuf::from(install_dir)
+                }
+                _ => base_dir_path.join(".drop-emulators").join(
+                    database::emulator_installations::build_key(
+                        &metadata.id,
+                        &metadata.version,
+                        metadata.target_platform,
+                    ),
+                ),
+            }
+        } else {
+            base_dir_path.join(game_name)
+        };
         info!("data dir path {}", data_base_dir_path.display());
 
         Self::new_at_path(
@@ -108,13 +129,14 @@ impl GameDownloadAgent {
         let control_flag = DownloadThreadControl::new(DownloadThreadControlFlag::Stop);
         create_dir_all(data_base_dir_path.clone())?;
 
-        let stored_manifest = DropData::generate(
+        let mut stored_manifest = DropData::generate(
             metadata.id.clone(),
             metadata.version.clone(),
             metadata.target_platform,
             data_base_dir_path.clone(),
             configuration.clone(),
         );
+        stored_manifest.emulator = metadata.download_type == database::DownloadType::Emulator;
 
         let result = Self {
             metadata,
@@ -191,12 +213,16 @@ impl GameDownloadAgent {
             .applications
             .transient_statuses
             .insert(self.metadata(), status.clone());
-        push_game_update(
-            app_handle,
-            &self.metadata.id,
-            None,
-            GameStatusManager::fetch_state(&self.metadata.id, &db_lock),
-        );
+        if self.metadata.download_type == database::DownloadType::Emulator {
+            app_emit!(app_handle, "update_library", ());
+        } else {
+            push_game_update(
+                app_handle,
+                &self.metadata.id,
+                None,
+                GameStatusManager::fetch_state(&self.metadata.id, &db_lock),
+            );
+        }
 
         Ok(())
     }
@@ -615,6 +641,16 @@ impl Downloadable for GameDownloadAgent {
     fn on_queued(&self, app_handle: &tauri::AppHandle) {
         *self.status.lock().unwrap() = DownloadStatus::Queued;
         let mut db_lock = borrow_db_mut_checked();
+        if self.metadata.download_type == database::DownloadType::Emulator {
+            self.dropdata.write();
+            set_partially_installed_db(
+                &mut db_lock,
+                &self.metadata,
+                self.dropdata.base_path.to_string_lossy().into_owned(),
+                None,
+                self.configuration.clone(),
+            );
+        }
         let status = ApplicationTransientStatus::Queued {
             version_id: self.metadata.version.clone(),
         };
@@ -622,7 +658,11 @@ impl Downloadable for GameDownloadAgent {
             .applications
             .transient_statuses
             .insert(self.metadata(), status.clone());
-        push_game_update(app_handle, &self.metadata.id, None, (None, Some(status)));
+        if self.metadata.download_type == database::DownloadType::Emulator {
+            app_emit!(app_handle, "update_library", ());
+        } else {
+            push_game_update(app_handle, &self.metadata.id, None, (None, Some(status)));
+        }
     }
 
     fn on_error(&self, app_handle: &tauri::AppHandle, error: &ApplicationDownloadError) {
@@ -637,12 +677,16 @@ impl Downloadable for GameDownloadAgent {
             .transient_statuses
             .remove(&self.metadata());
 
-        push_game_update(
-            app_handle,
-            &self.metadata.id,
-            None,
-            GameStatusManager::fetch_state(&self.metadata.id, &handle),
-        );
+        if self.metadata.download_type == database::DownloadType::Emulator {
+            app_emit!(app_handle, "update_library", ());
+        } else {
+            push_game_update(
+                app_handle,
+                &self.metadata.id,
+                None,
+                GameStatusManager::fetch_state(&self.metadata.id, &handle),
+            );
+        }
     }
 
     async fn on_complete(

@@ -485,7 +485,6 @@ class LibraryManager {
         message:
           "Emulators must be portable programs, not setup-only packages.",
       });
-    const emulatorVersions = new Map<string, string>();
     for (const launch of metadata.launches) {
       if (!launch.launch.trim())
         throw createError({
@@ -526,15 +525,6 @@ class LibraryManager {
             statusCode: 400,
             message: "Select a portable emulator launch for the same platform.",
           });
-        const key = `${launch.platform}:${emulator.gameVersion.gameId}`;
-        const previous = emulatorVersions.get(key);
-        if (previous && previous !== emulator.versionId)
-          throw createError({
-            statusCode: 400,
-            message:
-              "Launch options for the same platform must use the same version of an emulator.",
-          });
-        emulatorVersions.set(key, emulator.versionId);
       }
     }
 

@@ -21,6 +21,7 @@ pub mod data {
     pub type DownloadableMetadata = v1::DownloadableMetadata;
     pub type DownloadType = v1::DownloadType;
     pub type DatabaseApplications = v1::DatabaseApplications;
+    pub type EmulatorInstallation = v1::EmulatorInstallation;
     pub type UserConfiguration = v1::UserConfiguration;
     pub type LocalGame = v1::LocalGame;
     pub type ArchiveInstall = v1::ArchiveInstall;
@@ -36,12 +37,18 @@ pub mod data {
     impl PartialEq for DownloadableMetadata {
         fn eq(&self, other: &Self) -> bool {
             self.id == other.id && self.download_type == other.download_type
+                && (self.download_type != DownloadType::Emulator
+                    || (self.version == other.version && self.target_platform == other.target_platform))
         }
     }
     impl Hash for DownloadableMetadata {
         fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
             self.id.hash(state);
             self.download_type.hash(state);
+            if self.download_type == DownloadType::Emulator {
+                self.version.hash(state);
+                self.target_platform.hash(state);
+            }
         }
     }
 
@@ -49,6 +56,7 @@ pub mod data {
     enum DatabaseVersionEnum {
         V0_4_0 { database: v1::Database },
         V0_4_4 { database: v1::Database },
+        V0_4_8 { database: v1::Database },
     }
 
     pub struct DatabaseVersionSerializable(pub(crate) Database);
@@ -61,7 +69,9 @@ pub mod data {
             // Older clients automatically uninstall entries whose server cache
             // is missing. Do not let them interpret local folder registrations
             // as server installations: use a new format tag when locals exist.
-            let version = if self.0.applications.local_games.is_empty() {
+            let version = if !self.0.applications.emulator_installations.is_empty() {
+                DatabaseVersionEnum::V0_4_8 { database: self.0.clone() }
+            } else if self.0.applications.local_games.is_empty() {
                 DatabaseVersionEnum::V0_4_0 { database: self.0.clone() }
             } else {
                 DatabaseVersionEnum::V0_4_4 { database: self.0.clone() }
@@ -76,7 +86,7 @@ pub mod data {
             D: serde::Deserializer<'de>,
         {
             Ok(match DatabaseVersionEnum::deserialize(deserializer)? {
-                DatabaseVersionEnum::V0_4_0 { database } | DatabaseVersionEnum::V0_4_4 { database } => DatabaseVersionSerializable(database),
+                DatabaseVersionEnum::V0_4_0 { database } | DatabaseVersionEnum::V0_4_4 { database } | DatabaseVersionEnum::V0_4_8 { database } => DatabaseVersionSerializable(database),
             })
         }
     }
@@ -325,6 +335,7 @@ pub mod data {
         )]
         pub enum DownloadType {
             Game,
+            Emulator,
             Tool,
             Dlc,
             Mod,
@@ -354,6 +365,13 @@ pub mod data {
             }
         }
 
+        #[derive(Serialize, Clone, Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct EmulatorInstallation {
+            pub metadata: DownloadableMetadata,
+            pub status: GameDownloadStatus,
+        }
+
         #[serde_as]
         #[derive(Serialize, Clone, Deserialize, Default)]
         #[serde(rename_all = "camelCase")]
@@ -373,6 +391,8 @@ pub mod data {
 
             pub game_versions: HashMap<String, GameVersion>,
             pub installed_game_version: HashMap<String, DownloadableMetadata>,
+            #[serde(default)]
+            pub emulator_installations: HashMap<String, EmulatorInstallation>,
 
             pub additional_proton_paths: Vec<String>,
             pub default_proton_path: Option<String>,
@@ -429,6 +449,7 @@ pub mod data {
                     game_statuses: HashMap::new(),
                     game_versions: HashMap::new(),
                     installed_game_version: HashMap::new(),
+                    emulator_installations: HashMap::new(),
                     transient_statuses: HashMap::new(),
                     additional_proton_paths: Vec::new(),
                     default_proton_path: None,

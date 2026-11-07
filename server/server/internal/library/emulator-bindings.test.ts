@@ -91,7 +91,7 @@ test("all launches sharing an emulator build can be changed atomically", () => {
     ),
     undefined,
   );
-  assert.match(
+  assert.equal(
     validateEmulatorBindings(
       [launch, other],
       [
@@ -104,8 +104,8 @@ test("all launches sharing an emulator build can be changed atomically", () => {
       ],
       [emulator, { ...otherEmulator, versionId: "v1" }],
       true,
-    )!,
-    /same version/,
+    ),
+    undefined,
   );
 });
 

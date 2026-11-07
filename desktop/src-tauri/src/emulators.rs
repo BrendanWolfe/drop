@@ -22,6 +22,9 @@ pub struct EmulatorDependent {
 pub struct InstalledEmulator {
     game_id: String,
     name: String,
+    icon_object_id: Option<String>,
+    banner_object_id: Option<String>,
+    short_description: Option<String>,
     version_id: String,
     version_name: String,
     platform: Platform,
@@ -136,35 +139,23 @@ async fn refresh_launch_requirements(
 pub fn fetch_installed_emulators() -> Vec<InstalledEmulator> {
     let db = borrow_db_checked();
     let mut emulators = Vec::new();
-    for meta in db.applications.installed_game_version.values() {
-        let Some(GameDownloadStatus::Installed {
+    for installation in db.applications.emulator_installations.values() {
+        let meta = &installation.metadata;
+        let GameDownloadStatus::Installed {
             version_id,
             install_dir,
             install_type,
             ..
-        }) = db.applications.game_statuses.get(&meta.id)
+        } = &installation.status
         else {
             continue;
         };
-        if version_id != &meta.version || db.applications.local_games.contains_key(&meta.id) {
+        if version_id != &meta.version || !std::path::Path::new(install_dir).is_dir() {
             continue;
         }
         let game = get_cached_object_db::<Game>(&format!("game/{}", meta.id), &db).ok();
         let version = db.applications.game_versions.get(&meta.version);
         let dependents = required_by(&db, meta);
-        let is_emulator = game
-            .as_ref()
-            .is_some_and(|game| game.game_type == "Emulator")
-            || version.is_some_and(|version| {
-                version
-                    .launches
-                    .iter()
-                    .any(|launch| launch.emulator_profile.is_some())
-            })
-            || !dependents.is_empty();
-        if !is_emulator {
-            continue;
-        }
         let mut dependents = dependents
             .into_iter()
             .map(|dependent| {
@@ -189,6 +180,9 @@ pub fn fetch_installed_emulators() -> Vec<InstalledEmulator> {
         dependents.sort_by(|a, b| a.name.cmp(&b.name));
         emulators.push(InstalledEmulator {
             game_id: meta.id.clone(),
+            icon_object_id: game.as_ref().map(|game| game.m_icon_object_id.clone()),
+            banner_object_id: game.as_ref().map(|game| game.m_banner_object_id.clone()),
+            short_description: game.as_ref().map(|game| game.m_short_description.clone()),
             name: game
                 .map(|game| game.m_name)
                 .unwrap_or_else(|| meta.id.clone()),
@@ -203,14 +197,47 @@ pub fn fetch_installed_emulators() -> Vec<InstalledEmulator> {
             platform: meta.target_platform,
             install_dir: install_dir.clone(),
             install_type: install_type.clone(),
-            busy: db
-                .applications
-                .transient_statuses
-                .keys()
-                .any(|item| item.id == meta.id),
+            busy: games::emulators::emulator_in_use(&db, meta),
             required_by: dependents,
         });
     }
     emulators.sort_by(|a, b| a.name.cmp(&b.name));
     emulators
+}
+
+/// Reserve and remove precisely one build; failures retain its database record.
+#[tauri::command]
+pub async fn uninstall_emulator(
+    game_id: String,
+    version_id: String,
+    target_platform: Platform,
+    confirmed_dependencies: Vec<String>,
+    app_handle: AppHandle,
+) -> Result<(), String> {
+    let (meta, install_dir) = {
+        let mut db = borrow_db_mut_checked();
+        games::emulators::begin_emulator_uninstall(
+            &mut db,
+            &game_id,
+            &version_id,
+            target_platform,
+            &confirmed_dependencies,
+        )?
+    };
+    utils::app_emit!(&app_handle, "update_library", ());
+    let result =
+        tauri::async_runtime::spawn_blocking(move || match std::fs::remove_dir_all(&install_dir) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.to_string()),
+        })
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|result| result);
+    {
+        let mut db = borrow_db_mut_checked();
+        games::emulators::finish_emulator_uninstall(&mut db, &meta, result.is_ok());
+    }
+    utils::app_emit!(&app_handle, "update_library", ());
+    result
 }

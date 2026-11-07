@@ -830,7 +830,10 @@ const downloadQueue = useQueueState();
 const dependencyDownloadActive = computed(() =>
   missingEmulators.value.some((dependency) =>
     downloadQueue.value.queue.some(
-      (item) => item.meta.id === dependency.gameId,
+      (item) =>
+        item.meta.id === dependency.gameId &&
+        item.meta.version === dependency.versionId &&
+        item.meta.targetPlatform === dependency.platform,
     ),
   ),
 );
@@ -996,7 +999,9 @@ async function install() {
         enableUpdates: game.enableUpdates,
         reuseInstalled: game.gameId !== id,
         requiredLaunchIds: versionOption.requiredContent.find(
-          (dependency) => dependency.gameId === game.gameId,
+          (dependency) =>
+            dependency.gameId === game.gameId &&
+            dependency.versionId === game.versionId,
         )?.launchIds,
       });
     }

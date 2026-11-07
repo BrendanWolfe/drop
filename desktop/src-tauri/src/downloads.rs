@@ -10,7 +10,8 @@ use crate::{
 };
 use database::{
     DownloadType, DownloadableMetadata, GameDownloadStatus, borrow_db_checked,
-    install_locations::InstallLocationKind, models::data::InstalledGameType, platform::Platform,
+    borrow_db_mut_checked, install_locations::InstallLocationKind, models::data::InstalledGameType,
+    platform::Platform,
 };
 use download_manager::{
     DOWNLOAD_MANAGER, downloadable::Downloadable, error::ApplicationDownloadError,
@@ -30,6 +31,8 @@ pub async fn download_game(
     enable_updates: bool,
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<(), ApplicationDownloadError> {
+    // Keep the old IPC field accepted; immutable emulator builds now always reuse.
+    let _ = reuse_installed;
     if borrow_db_checked()
         .applications
         .local_games
@@ -46,8 +49,14 @@ pub async fn download_game(
     } else {
         InstallLocationKind::Game
     };
-    if reuse_installed == Some(true)
-        && game.game.game_type == "Emulator"
+    let is_emulator = game.game.game_type == "Emulator";
+    if is_emulator {
+        borrow_db_mut_checked()
+            .applications
+            .migrate_emulator(&game_id);
+    }
+    // Complete immutable builds are always reused, including repair requests.
+    if is_emulator
         && games::emulators::emulator_install_path(
             &borrow_db_checked(),
             &game_id,
@@ -70,7 +79,11 @@ pub async fn download_game(
         id: game_id,
         version: version_id,
         target_platform,
-        download_type: DownloadType::Game,
+        download_type: if is_emulator {
+            DownloadType::Emulator
+        } else {
+            DownloadType::Game
+        },
     };
 
     {
@@ -102,7 +115,7 @@ pub async fn download_game(
                     .get(&installed.version)
                     .map(|version| (installed.target_platform, &version.user_configuration))
             });
-        configuration_for_build(existing, target_platform, enable_updates)
+        configuration_for_build(existing, target_platform, enable_updates && !is_emulator)
     };
 
     let base_dir = {
@@ -114,14 +127,32 @@ pub async fn download_game(
             .map_err(ApplicationDownloadError::Archive)?
     };
 
+    if is_emulator
+        && !games::emulators::reserve_emulator_download(&mut borrow_db_mut_checked(), &meta)
+            .map_err(ApplicationDownloadError::Archive)?
+    {
+        return Ok(());
+    }
     let game_download_agent = GameDownloadAgent::new(
-        meta,
+        meta.clone(),
         base_dir,
         sender,
         DOWNLOAD_MANAGER.clone_depot_manager(),
         configuration,
     )
-    .await?;
+    .await;
+    let game_download_agent = match game_download_agent {
+        Ok(agent) => agent,
+        Err(error) => {
+            if is_emulator {
+                borrow_db_mut_checked()
+                    .applications
+                    .transient_statuses
+                    .remove(&meta);
+            }
+            return Err(error);
+        }
+    };
 
     let game_download_agent =
         Arc::new(Box::new(game_download_agent) as Box<dyn Downloadable + Send + Sync>);
@@ -129,13 +160,17 @@ pub async fn download_game(
     DOWNLOAD_MANAGER
         .queue_download(game_download_agent.clone())
         .await
-        .unwrap();
+        .map_err(|error| ApplicationDownloadError::Archive(error.to_string()))?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn resume_download(game_id: String) -> Result<(), ApplicationDownloadError> {
+pub async fn resume_download(
+    game_id: String,
+    version_id: Option<String>,
+    target_platform: Option<Platform>,
+) -> Result<(), ApplicationDownloadError> {
     if borrow_db_checked()
         .applications
         .local_games
@@ -147,19 +182,37 @@ pub async fn resume_download(game_id: String) -> Result<(), ApplicationDownloadE
     }
     let (meta, (install_dir, configuration)) = {
         let db_lock = borrow_db_checked();
-        let status = db_lock
-            .applications
-            .game_statuses
-            .get(&game_id)
-            .ok_or(ApplicationDownloadError::InvalidCommand)?
-            .clone();
+        let exact = match (&version_id, target_platform) {
+            (Some(version), Some(platform)) => Some(
+                db_lock
+                    .applications
+                    .emulator_installation(&game_id, version, platform)
+                    .ok_or(ApplicationDownloadError::InvalidCommand)?,
+            ),
+            (None, None) => None,
+            _ => return Err(ApplicationDownloadError::InvalidCommand),
+        };
+        let status = if let Some(install) = exact {
+            install.status.clone()
+        } else {
+            db_lock
+                .applications
+                .game_statuses
+                .get(&game_id)
+                .ok_or(ApplicationDownloadError::InvalidCommand)?
+                .clone()
+        };
 
-        let meta = db_lock
-            .applications
-            .installed_game_version
-            .get(&game_id)
-            .ok_or(ApplicationDownloadError::InvalidCommand)?
-            .clone();
+        let meta = if let Some(install) = exact {
+            install.metadata.clone()
+        } else {
+            db_lock
+                .applications
+                .installed_game_version
+                .get(&game_id)
+                .ok_or(ApplicationDownloadError::InvalidCommand)?
+                .clone()
+        };
 
         let install_dir = match status {
             GameDownloadStatus::Installed {
@@ -174,20 +227,39 @@ pub async fn resume_download(game_id: String) -> Result<(), ApplicationDownloadE
 
     let sender = DOWNLOAD_MANAGER.get_sender();
 
-    let game_download_agent = Arc::new(Box::new(
-        GameDownloadAgent::new_at_path(
-            meta,
-            PathBuf::from(install_dir),
-            sender,
-            DOWNLOAD_MANAGER.clone_depot_manager(),
-            configuration,
-        )
-        .await?,
-    ) as Box<dyn Downloadable + Send + Sync>);
+    let emulator = meta.download_type == DownloadType::Emulator;
+    if emulator
+        && !games::emulators::reserve_emulator_download(&mut borrow_db_mut_checked(), &meta)
+            .map_err(ApplicationDownloadError::Archive)?
+    {
+        return Ok(());
+    }
+
+    let agent = GameDownloadAgent::new_at_path(
+        meta.clone(),
+        PathBuf::from(install_dir),
+        sender,
+        DOWNLOAD_MANAGER.clone_depot_manager(),
+        configuration,
+    )
+    .await;
+    let agent = match agent {
+        Ok(agent) => agent,
+        Err(error) => {
+            if emulator {
+                borrow_db_mut_checked()
+                    .applications
+                    .transient_statuses
+                    .remove(&meta);
+            }
+            return Err(error);
+        }
+    };
+    let game_download_agent = Arc::new(Box::new(agent) as Box<dyn Downloadable + Send + Sync>);
 
     DOWNLOAD_MANAGER
         .queue_download(game_download_agent)
         .await
-        .unwrap();
+        .map_err(|error| ApplicationDownloadError::Archive(error.to_string()))?;
     Ok(())
 }

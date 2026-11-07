@@ -26,15 +26,11 @@ test("multiple emulator dependencies are all retained", () => {
   ]);
 });
 
-test("conflicting versions or platforms fail before any download is queued", () => {
-  assert.throws(
-    () =>
-      emulatorRepairPlan([requirement, { ...requirement, versionId: "other" }]),
-    /conflicting/,
-  );
-  assert.throws(
-    () =>
-      emulatorRepairPlan([requirement, { ...requirement, platform: "Linux" }]),
-    /conflicting/,
+test("different versions and platforms are independent side-by-side repairs", () => {
+  const other = { ...requirement, versionId: "other" };
+  const linux = { ...requirement, platform: "Linux" };
+  assert.deepEqual(
+    emulatorRepairPlan([requirement, other, linux, requirement]),
+    [requirement, other, linux],
   );
 });
