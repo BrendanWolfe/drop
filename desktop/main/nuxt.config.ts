@@ -16,7 +16,14 @@ export default defineNuxtConfig({
 
   extends: [["../../libraries/base"]],
 
+  vite: {
+    resolve: {
+      // Shared-layer dialogs and desktop slots must use the same context keys.
+      dedupe: ["vue", "@headlessui/vue"],
+    },
+  },
+
   app: {
     baseURL: "/main",
-  }
+  },
 });
