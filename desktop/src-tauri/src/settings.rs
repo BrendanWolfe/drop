@@ -5,7 +5,10 @@ use std::{
 };
 
 use database::{
-    borrow_db_checked, borrow_db_mut_checked, db::DATA_ROOT_DIR, debug::SystemData, Settings,
+    Settings, borrow_db_checked, borrow_db_mut_checked,
+    db::DATA_ROOT_DIR,
+    debug::SystemData,
+    install_locations::{InstallLocationKind, InstallLocations},
 };
 use download_manager::error::DownloadManagerError;
 use games::{downloads::set_download_speed_limit, scan::scan_install_dirs};
@@ -15,21 +18,50 @@ use serde_json::Value;
 // Will, in future, return disk/remaining size
 // Just returns the directories that have been set up
 #[tauri::command]
-pub fn fetch_download_dir_stats() -> Vec<PathBuf> {
+pub fn fetch_download_dir_stats(kind: Option<InstallLocationKind>) -> Vec<PathBuf> {
     let lock = borrow_db_checked();
-    lock.applications.install_dirs.clone()
+    lock.applications
+        .install_directories(kind.unwrap_or_default())
+        .to_vec()
 }
 
 #[tauri::command]
-pub fn delete_download_dir(index: usize) {
+pub fn fetch_install_locations() -> InstallLocations {
+    borrow_db_checked().applications.install_locations()
+}
+
+#[tauri::command]
+pub fn set_default_download_dir(
+    index: Option<usize>,
+    path: Option<PathBuf>,
+    kind: InstallLocationKind,
+) -> Result<(), String> {
     let mut lock = borrow_db_mut_checked();
-    lock.applications.install_dirs.remove(index);
+    let index = lock
+        .applications
+        .configured_install_index(kind, index, path.as_deref())?;
+    lock.applications.set_default_install_directory(kind, index)
+}
+
+#[tauri::command]
+pub fn delete_download_dir(
+    index: Option<usize>,
+    path: Option<PathBuf>,
+    kind: Option<InstallLocationKind>,
+) -> Result<(), String> {
+    let mut lock = borrow_db_mut_checked();
+    let kind = kind.unwrap_or_default();
+    let index = lock
+        .applications
+        .configured_install_index(kind, index, path.as_deref())?;
+    lock.applications.remove_install_directory(kind, index)
 }
 
 #[tauri::command]
 pub fn add_download_dir(
     new_dir: PathBuf,
     allow_non_empty: bool,
+    kind: Option<InstallLocationKind>,
 ) -> Result<(), DownloadManagerError<()>> {
     // Check the new directory is all good
     let new_dir_path = Path::new(&new_dir);
@@ -48,14 +80,9 @@ pub fn add_download_dir(
 
     // Add it to the dictionary
     let mut lock = borrow_db_mut_checked();
-    if lock.applications.install_dirs.contains(&new_dir) {
-        return Err(Error::new(
-            ErrorKind::AlreadyExists,
-            "Selected directory already exists in database",
-        )
-        .into());
-    }
-    lock.applications.install_dirs.push(new_dir);
+    lock.applications
+        .add_install_directory(kind.unwrap_or_default(), new_dir)
+        .map_err(|message| Error::new(ErrorKind::AlreadyExists, message))?;
     drop(lock);
 
     scan_install_dirs();

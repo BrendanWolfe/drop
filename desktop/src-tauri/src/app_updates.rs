@@ -2,7 +2,7 @@
 use std::{
     io::Write,
     sync::nonpoison::Mutex,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -28,6 +28,12 @@ pub struct UpdateStatus {
     downloaded: u64,
     total: Option<u64>,
     error: Option<String>,
+    version: String,
+    release_tag: Option<String>,
+    automatic_updates: bool,
+    last_checked: Option<u64>,
+    last_updated: Option<u64>,
+    disabled_reason: Option<String>,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Serialize)]
@@ -54,13 +60,41 @@ pub struct DesktopUpdater {
     status: Mutex<UpdateStatus>,
     // Serializes automatic checks, manual retries and installs.
     operation: tokio::sync::Mutex<Option<PreparedUpdate>>,
+    wake: tokio::sync::Notify,
 }
 
 impl DesktopUpdater {
     fn publish(&self, app: &AppHandle, status: UpdateStatus) {
-        *self.status.lock() = status.clone();
-        let _ = app.emit(EVENT, status);
+        let mut current = self.status.lock();
+        *current = status_with_metadata(app, status);
+        let _ = app.emit(EVENT, current.clone());
     }
+
+    fn publish_metadata(&self, app: &AppHandle) -> UpdateStatus {
+        // A preference change must not overwrite concurrent download progress.
+        let mut current = self.status.lock();
+        *current = status_with_metadata(app, current.clone());
+        let _ = app.emit(EVENT, current.clone());
+        current.clone()
+    }
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn status_with_metadata(app: &AppHandle, mut status: UpdateStatus) -> UpdateStatus {
+    let db = database::borrow_db_checked();
+    status.version = app.package_info().version.to_string();
+    status.release_tag = RELEASE_TAG.map(str::to_owned);
+    status.automatic_updates = db.settings.automatic_client_updates;
+    status.last_checked = db.desktop_update_history.last_checked;
+    status.last_updated = db.desktop_update_history.last_updated;
+    status.disabled_reason = disabled_reason().map(str::to_owned);
+    status
 }
 
 fn disabled_reason() -> Option<&'static str> {
@@ -78,6 +112,12 @@ fn disabled_reason() -> Option<&'static str> {
 }
 
 pub fn start(app: &AppHandle) {
+    let identity = RELEASE_TAG
+        .map(str::to_owned)
+        .unwrap_or_else(|| app.package_info().version.to_string());
+    database::borrow_db_mut_checked()
+        .desktop_update_history
+        .record_client_start(&identity, now_millis());
     if let Some(reason) = disabled_reason() {
         log::info!("desktop updater disabled: {reason}");
         app.state::<DesktopUpdater>().publish(
@@ -89,25 +129,56 @@ pub fn start(app: &AppHandle) {
         );
         return;
     }
+    app.state::<DesktopUpdater>()
+        .publish(app, UpdateStatus::default());
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            let result = check_desktop_update(app.clone()).await;
-            let delay = if result.is_err() { 5 * 60 } else { 30 * 60 };
-            tokio::time::sleep(Duration::from_secs(delay)).await;
+            let enabled = {
+                let db = database::borrow_db_checked();
+                db.settings.automatic_client_updates && !db.settings.force_offline
+            };
+            let failed = enabled && check_update(app.clone(), true).await.is_err();
+            let delay = if failed { 5 * 60 } else { 30 * 60 };
+            let state = app.state::<DesktopUpdater>();
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(delay)) => {},
+                _ = state.wake.notified() => {},
+            }
         }
     });
 }
 
 #[tauri::command]
-pub fn desktop_update_status(state: State<'_, DesktopUpdater>) -> UpdateStatus {
-    state.status.lock().clone()
+pub fn desktop_update_status(app: AppHandle, state: State<'_, DesktopUpdater>) -> UpdateStatus {
+    status_with_metadata(&app, state.status.lock().clone())
+}
+
+#[tauri::command]
+pub fn set_desktop_automatic_updates(app: AppHandle, enabled: bool) -> UpdateStatus {
+    database::borrow_db_mut_checked()
+        .settings
+        .automatic_client_updates = enabled;
+    let state = app.state::<DesktopUpdater>();
+    let status = state.publish_metadata(&app);
+    state.wake.notify_one();
+    status
 }
 
 #[tauri::command]
 pub async fn check_desktop_update(app: AppHandle) -> Result<(), String> {
+    check_update(app, false).await
+}
+
+async fn check_update(app: AppHandle, automatic: bool) -> Result<(), String> {
     if let Some(reason) = disabled_reason() {
         return Err(reason.into());
+    }
+    if database::borrow_db_checked().settings.force_offline {
+        return Err(
+            "Turn off Force offline in Download settings before checking for client updates."
+                .into(),
+        );
     }
     let state = app.state::<DesktopUpdater>();
     let Ok(mut prepared) = state.operation.try_lock() else {
@@ -116,6 +187,16 @@ pub async fn check_desktop_update(app: AppHandle) -> Result<(), String> {
     if prepared.is_some() {
         return Ok(());
     }
+    if automatic
+        && !database::borrow_db_checked()
+            .settings
+            .automatic_client_updates
+    {
+        return Ok(());
+    }
+    database::borrow_db_mut_checked()
+        .desktop_update_history
+        .last_checked = Some(now_millis());
     state.publish(
         &app,
         UpdateStatus {
@@ -316,12 +397,21 @@ mod tests {
             downloaded: 123,
             total: Some(123),
             error: None,
+            version: "0.4.5".into(),
+            release_tag: Some("v0.4.5-build.1".into()),
+            automatic_updates: false,
+            last_checked: Some(100),
+            last_updated: Some(50),
+            disabled_reason: None,
         };
         assert_eq!(
             serde_json::to_value(status).unwrap(),
             serde_json::json!({
                 "phase": "ready", "tag": "v0.4.5-build.2",
-                "downloaded": 123, "total": 123, "error": null
+                "downloaded": 123, "total": 123, "error": null,
+                "version": "0.4.5", "releaseTag": "v0.4.5-build.1",
+                "automaticUpdates": false, "lastChecked": 100,
+                "lastUpdated": 50, "disabledReason": null
             })
         );
     }

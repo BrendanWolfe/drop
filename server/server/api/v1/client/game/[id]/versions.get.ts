@@ -22,6 +22,8 @@ type VersionDownloadOption = {
   requiredContent: Array<{
     gameId: string;
     versionId: string;
+    launchIds: string[];
+    versionName: string;
     name: string;
     iconObjectId: string;
     shortDescription: string;
@@ -65,6 +67,7 @@ export default defineClientEventHandler(async (h3) => {
           protonCompatible: true,
           emulator: {
             select: {
+              launchId: true,
               platform: true,
               protonCompatible: true,
               gameVersion: {
@@ -78,6 +81,8 @@ export default defineClientEventHandler(async (h3) => {
                     },
                   },
                   versionId: true,
+                  displayName: true,
+                  versionPath: true,
                 },
               },
             },
@@ -116,6 +121,8 @@ export default defineClientEventHandler(async (h3) => {
             const content = {
               gameId: gv.game.id,
               versionId: gv.versionId,
+              launchIds: [launch.emulator.launchId],
+              versionName: gv.displayName || gv.versionPath || gv.versionId,
               name: gv.game.mName,
               iconObjectId: gv.game.mIconObjectId,
               shortDescription: gv.game.mShortDescription,
@@ -125,8 +132,13 @@ export default defineClientEventHandler(async (h3) => {
               option.requiredContent,
               ...(protonAllowed ? [option.protonRequiredContent] : []),
             ]) {
-              if (!list.some((item) => item.versionId === gv.versionId))
-                list.push(content);
+              const existing = list.find(
+                (item) => item.versionId === gv.versionId,
+              );
+              if (!existing)
+                list.push({ ...content, launchIds: [...content.launchIds] });
+              else if (!existing.launchIds.includes(launch.emulator.launchId))
+                existing.launchIds.push(launch.emulator.launchId);
             }
           }
         }

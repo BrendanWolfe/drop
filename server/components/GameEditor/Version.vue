@@ -144,6 +144,18 @@
                     </button>
                     -->
                     <button
+                      v-if="
+                        game.type === 'Game' &&
+                        !version.onlySetup &&
+                        (game.isEmulated ||
+                          version.launches.some((launch) => launch.emulator))
+                      "
+                      class="inline-flex min-h-10 items-center rounded-md bg-zinc-800 px-3 py-2 text-blue-300 hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-blue-400"
+                      @click="editingEmulators = version"
+                    >
+                      {{ $t("emulators.editRequirements") }}
+                    </button>
+                    <button
                       class="text-red-400 hover:text-red-300"
                       @click="() => deleteVersion(version.versionId)"
                     >
@@ -176,6 +188,14 @@
       </div>
     </div>
   </div>
+  <GameEditorEmulatorRequirements
+    v-if="editingEmulators"
+    :model-value="true"
+    :game-id="game.id"
+    :version="editingEmulators"
+    @update:model-value="if (!$event) editingEmulators = undefined;"
+    @saved="editingEmulators!.launches = $event"
+  />
 </template>
 
 <script setup lang="ts">
@@ -206,6 +226,7 @@ if (!game.value)
   });
 
 type VersionType = (typeof game.value.versions)[number];
+const editingEmulators = ref<VersionType>();
 
 async function updateVersionOrder() {
   try {

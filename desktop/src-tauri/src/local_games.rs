@@ -229,7 +229,8 @@ async fn queue_archive(game: LocalGame) -> Result<(), String> {
 pub async fn download_archive(
     name: String,
     url: String,
-    install_dir: usize,
+    install_dir: Option<usize>,
+    install_path: Option<PathBuf>,
     app_handle: AppHandle,
 ) -> Result<String, String> {
     parse_external_url(&url).map_err(|e| e.to_string())?;
@@ -239,10 +240,7 @@ pub async fn download_archive(
     }
     let base = borrow_db_checked()
         .applications
-        .install_dirs
-        .get(install_dir)
-        .cloned()
-        .ok_or("Choose an installation directory")?;
+        .resolve_install_directory(database::install_locations::InstallLocationKind::Game, install_dir, install_path.as_deref())?;
     let id = format!("local-{}", uuid::Uuid::new_v4());
     let folder_name = name
         .chars()

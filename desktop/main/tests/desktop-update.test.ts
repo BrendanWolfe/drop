@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
   updateButtonLabel,
+  updateTimestamp,
   type DesktopUpdateStatus,
 } from "../utils/desktop-update.ts";
 
@@ -13,6 +14,14 @@ const status: DesktopUpdateStatus = {
   total: null,
   error: null,
 };
+
+test("update timestamps preserve exact instants and omit missing or invalid history", () => {
+  const time = Date.parse("2026-11-07T12:34:00Z");
+  assert.equal(updateTimestamp(time)?.iso, "2026-11-07T12:34:00.000Z");
+  assert.ok(updateTimestamp(time)?.label);
+  for (const invalid of [undefined, null, NaN, Infinity, -1, Number.MAX_VALUE])
+    assert.equal(updateTimestamp(invalid), undefined);
+});
 
 test("the update widget sits immediately left of Downloads", () => {
   const header = readFileSync(

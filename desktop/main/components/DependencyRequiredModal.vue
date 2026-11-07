@@ -30,6 +30,8 @@
       <InstallDirectorySelector
         :install-dirs="installDirs"
         v-model="installDir"
+        label="Emulator location"
+        :default-index="locations.defaultIndex"
       />
 
       <div v-if="installError" class="mt-1 rounded-md bg-red-600/10 p-4">
@@ -71,6 +73,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { XCircleIcon } from "@heroicons/vue/24/solid";
 import { buildLabel, findRequiredBuild } from "~/utils/version-options";
+import { defaultInstallIndex } from "~/utils/install-locations";
 
 const model = defineModel<{
   gameId: string;
@@ -90,8 +93,9 @@ const versionOptions = await invoke<Array<VersionOption>>(
 );
 const version = findRequiredBuild(versionOptions, model.value);
 
-const installDirs = await invoke<string[]>("fetch_download_dir_stats");
-const installDir = ref(0);
+const locations = (await fetchInstallLocations()).emulator;
+const installDirs = locations.directories;
+const installDir = ref(defaultInstallIndex(locations));
 
 function cancel() {
   // @ts-expect-error
@@ -105,11 +109,12 @@ async function install() {
   try {
     if (!version)
       throw new Error("The required emulator build is unavailable.");
+    if (!installDirs[installDir.value]) throw new Error("Select an emulator installation location.");
     installLoading.value = true;
     await invoke("download_game", {
       gameId: game.id,
       versionId: model.value.versionId,
-      installDir: installDir.value,
+      installPath: installDirs[installDir.value],
       targetPlatform: version.platform,
       enableUpdates: false,
     });

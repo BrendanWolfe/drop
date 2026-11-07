@@ -58,6 +58,11 @@ const navigation: Array<NavigationItem> = [
     route: "/library",
     label: "Library",
   },
+  {
+    prefix: "/emulators",
+    route: "/emulators",
+    label: "Emulators",
+  },
 ];
 
 const { currentNavigation } = useCurrentNavigationIndex(navigation);

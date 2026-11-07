@@ -1,9 +1,75 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { gameInstallPlan } from "../utils/emulator-install.ts";
+import {
+  gameInstallPlan,
+  emulatorRequirementsChanged,
+} from "../utils/emulator-install.ts";
 
 const game = { gameId: "game", versionId: "game-version" };
 const emulator = { gameId: "emulator", versionId: "emulator-version" };
+
+test("an exact installed emulator is reused without downloading it or requiring a destination", () => {
+  assert.deepEqual(
+    gameInstallPlan(
+      game,
+      [{ ...emulator, installedPath: "/existing/emulator" }],
+      true,
+    ),
+    [{ ...game, enableUpdates: true }],
+  );
+});
+
+test("mixed installed and missing dependencies only queue missing builds", () => {
+  const missing = { gameId: "other-emulator", versionId: "v2" };
+  assert.deepEqual(
+    gameInstallPlan(
+      game,
+      [{ ...emulator, installedPath: "/existing/emulator" }, missing],
+      false,
+    ),
+    [
+      { ...missing, enableUpdates: false },
+      { ...game, enableUpdates: false },
+    ],
+  );
+});
+
+test("readiness changes or administrator pin edits require review before installation", () => {
+  const installed = {
+    ...emulator,
+    installedPath: "/emulator",
+    launchIds: ["launch"],
+  };
+  assert.equal(emulatorRequirementsChanged([installed], [installed]), false);
+  assert.equal(
+    emulatorRequirementsChanged(
+      [installed],
+      [{ ...installed, installedPath: null }],
+    ),
+    true,
+  );
+  assert.equal(
+    emulatorRequirementsChanged(
+      [installed],
+      [{ ...installed, versionId: "new" }],
+    ),
+    true,
+  );
+  assert.equal(
+    emulatorRequirementsChanged(
+      [installed],
+      [{ ...installed, launchIds: ["other"] }],
+    ),
+    true,
+  );
+  assert.equal(
+    emulatorRequirementsChanged(
+      [emulator],
+      [{ ...emulator, installedPath: "/now-installed" }],
+    ),
+    false,
+  );
+});
 
 test("required emulators are installed first and never follow latest updates", () => {
   assert.deepEqual(gameInstallPlan(game, [emulator], true), [

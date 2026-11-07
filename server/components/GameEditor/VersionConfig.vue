@@ -51,7 +51,7 @@
     <EmulatorWidget
       v-if="!isSetup(props.config) && props.config.emulator"
       :emulator="{
-        launchId: props.config.launchId,
+        launchId: props.config.emulator.launchId,
         gameName: props.config.emulator.gameVersion.game.mName,
         gameIcon: props.config.emulator.gameVersion.game.mIconObjectId,
         versionName: (props.config.emulator.gameVersion.displayName ??

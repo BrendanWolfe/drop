@@ -16,7 +16,11 @@ pub fn scan_install_dirs() {
 }
 
 fn scan_install_dirs_db(db: &mut Database) {
-    for install_dir in db.applications.install_dirs.clone() {
+    let mut directories = db.applications.install_dirs.clone();
+    for directory in db.applications.install_directories(database::install_locations::InstallLocationKind::Emulator) {
+        if !directories.contains(directory) { directories.push(directory.clone()); }
+    }
+    for install_dir in directories {
         let Ok(files) = fs::read_dir(install_dir) else {
             continue;
         };
@@ -145,6 +149,18 @@ mod tests {
         assert_eq!(metadata.version, version);
         assert_eq!(metadata.target_platform, Platform::HOST);
         assert_eq!(metadata.download_type, DownloadType::Game);
+    }
+
+    #[test]
+    fn scan_recovers_emulators_from_their_separate_locations() {
+        let games = tempfile::tempdir().unwrap();
+        let emulators = tempfile::tempdir().unwrap();
+        let configuration = test_configuration();
+        create_drop_data(emulators.path(), "emulator", "1.2.3", configuration.clone());
+        let mut db = database_with_install_dir(games.path());
+        db.applications.emulator_install_dirs = Some(vec![emulators.path().to_path_buf()]);
+        scan_install_dirs_db(&mut db);
+        assert_recovered(&db, emulators.path(), "emulator", "1.2.3", &configuration);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import aclManager from "~/server/internal/acls";
 import prisma from "~/server/internal/db/database";
 import gameSizeManager from "~/server/internal/gamesize";
+import { emulatorRequirements as getEmulatorRequirements } from "~/server/internal/library/emulator-requirements";
 import { getAgeRestrictionFilter } from "~/server/internal/utils/ageRestrictions";
 
 export default defineEventHandler(async (h3) => {
@@ -29,7 +30,22 @@ export default defineEventHandler(async (h3) => {
     include: {
       versions: {
         include: {
-          launches: true,
+          launches: {
+            include: {
+              emulator: {
+                select: {
+                  gameVersion: {
+                    select: {
+                      versionId: true,
+                      displayName: true,
+                      versionPath: true,
+                      game: { select: { id: true, mName: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
           setups: true,
         },
         omit: {
@@ -93,6 +109,8 @@ export default defineEventHandler(async (h3) => {
       .flat(),
   );
 
+  const emulatorRequirements = getEmulatorRequirements(game.versions);
+
   const gameV: Omit<typeof game, "versions"> = game;
 
   // @ts-expect-error value exists at runtime
@@ -100,6 +118,7 @@ export default defineEventHandler(async (h3) => {
 
   return {
     game: gameV,
+    emulatorRequirements,
     rating,
     sizes,
     platforms: platforms.values().toArray(),

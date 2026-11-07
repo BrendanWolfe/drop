@@ -6,6 +6,12 @@ use serde::{Deserialize, Serialize};
 pub struct RequiredContent {
     pub game_id: String,
     pub version_id: String,
+    #[serde(default)]
+    pub launch_ids: Vec<String>,
+    #[serde(default)]
+    version_name: Option<String>,
+    #[serde(default)]
+    pub installed_path: Option<String>,
     name: String,
     icon_object_id: String,
     short_description: String,
@@ -41,7 +47,7 @@ pub struct VersionDownloadOption {
     #[serde(default)]
     pub proton_setup_required: bool,
     size: GameSize,
-    required_content: Vec<RequiredContent>,
+    pub required_content: Vec<RequiredContent>,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -30,7 +30,7 @@ export type AppState = {
 
 export type Game = {
   id: string;
-  type: "Game" | "Executor" | "Redist";
+  type: "Game" | "Emulator" | "Dependency" | "Executor" | "Redist";
   mName: string;
   mShortDescription: string;
   mDescription: string;
@@ -60,6 +60,33 @@ export type GameVersion = {
   setups: Array<{ platform: string }>;
   launches: Array<{ platform: string }>;
 };
+
+export type InstalledEmulator = {
+  gameId: string;
+  name: string;
+  versionId: string;
+  versionName: string;
+  platform: string;
+  installDir: string;
+  installType: { type: InstalledType };
+  busy: boolean;
+  requiredBy: Array<{ gameId: string; name: string; versionName: string }>;
+};
+
+export type MissingEmulator = {
+  gameId: string;
+  versionId: string;
+  platform: string;
+  name: string;
+  versionName: string;
+};
+
+export type InstallLocationKind = "game" | "emulator";
+export type InstallLocationList = {
+  directories: string[];
+  defaultIndex: number | null;
+};
+export type InstallLocations = Record<InstallLocationKind, InstallLocationList>;
 
 export enum AppStatus {
   NotConfigured = "NotConfigured",
@@ -122,6 +149,7 @@ export type Settings = {
   autostart: boolean;
   maxDownloadThreads: number;
   maxDownloadSpeed: number;
+  automaticClientUpdates: boolean;
   forceOffline: boolean;
 };
 

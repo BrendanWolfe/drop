@@ -31,6 +31,7 @@
       </Switch>
     </div>
   </div>
+  <ClientUpdateSettings />
 </template>
 
 <script setup lang="ts">

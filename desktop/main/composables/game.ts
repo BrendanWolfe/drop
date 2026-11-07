@@ -83,6 +83,9 @@ export type VersionOption = {
   requiredContent: Array<{
     gameId: string;
     versionId: string;
+    launchIds?: string[];
+    versionName?: string | null;
+    installedPath?: string | null;
     name: string;
     iconObjectId: string;
     shortDescription: string;

@@ -33,6 +33,7 @@
               >
                 {{ game.mName }}
               </h2>
+              <EmulatedBadge v-if="game.isEmulated" class="mt-3" />
               <p
                 class="mt-3 text-lg text-zinc-300 line-clamp-2 max-w-xl mx-auto"
               >

@@ -9,6 +9,7 @@ pub mod data {
     pub type Database = v1::Database;
     pub type GameVersion = v1::GameVersion;
     pub type Settings = v1::Settings;
+    pub type DesktopUpdateHistory = v1::DesktopUpdateHistory;
     pub type DatabaseAuth = v1::DatabaseAuth;
 
     pub type GameDownloadStatus = v1::GameDownloadStatus;
@@ -248,6 +249,8 @@ pub mod data {
             /// Aggregate download speed limit in bytes per second. 0 means unlimited.
             #[serde(default)]
             pub max_download_speed: u64,
+            #[serde(default = "automatic_updates_enabled")]
+            pub automatic_client_updates: bool,
             pub force_offline: bool, // ... other settings ...
         }
         impl Default for Settings {
@@ -256,9 +259,22 @@ pub mod data {
                     autostart: false,
                     max_download_threads: 4,
                     max_download_speed: 0,
+                    automatic_client_updates: true,
                     force_offline: false,
                 }
             }
+        }
+
+        fn automatic_updates_enabled() -> bool {
+            true
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+        #[serde(rename_all = "camelCase")]
+        pub struct DesktopUpdateHistory {
+            pub last_checked: Option<u64>,
+            pub last_updated: Option<u64>,
+            pub last_seen_version: Option<String>,
         }
 
         #[derive(Serialize, Clone, Deserialize, Debug)]
@@ -343,6 +359,13 @@ pub mod data {
         #[serde(rename_all = "camelCase")]
         pub struct DatabaseApplications {
             pub install_dirs: Vec<PathBuf>,
+            // Legacy databases inherit their existing locations until first edited.
+            #[serde(default)]
+            pub emulator_install_dirs: Option<Vec<PathBuf>>,
+            #[serde(default)]
+            pub default_install_dir: Option<PathBuf>,
+            #[serde(default)]
+            pub default_emulator_install_dir: Option<PathBuf>,
             #[serde(default)]
             pub local_games: HashMap<String, LocalGame>,
             // Guaranteed to exist if the game also exists in the app state map
@@ -360,6 +383,8 @@ pub mod data {
 
         #[derive(Serialize, Deserialize, Clone, Default)]
         pub struct Database {
+            #[serde(default)]
+            pub desktop_update_history: DesktopUpdateHistory,
             #[serde(default)]
             pub steam_registrations: HashMap<String, steam_shortcuts::Registration>,
             #[serde(default)]
@@ -388,13 +413,18 @@ pub mod data {
             prev_database: Option<PathBuf>,
             cache_dir: PathBuf,
         ) -> Self {
+            let games_base_dir = games_base_dir.into();
             Self {
+                desktop_update_history: Default::default(),
                 proxy_auth: HashMap::new(),
                 steam_registrations: HashMap::new(),
                 steam_profile: None,
                 proxy_auth_cleanup: Default::default(),
                 applications: DatabaseApplications {
-                    install_dirs: vec![games_base_dir.into()],
+                    install_dirs: vec![games_base_dir.clone()],
+                    emulator_install_dirs: Some(vec![games_base_dir]),
+                    default_install_dir: None,
+                    default_emulator_install_dir: None,
                     local_games: HashMap::new(),
                     game_statuses: HashMap::new(),
                     game_versions: HashMap::new(),

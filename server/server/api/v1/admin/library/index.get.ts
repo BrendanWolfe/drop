@@ -53,7 +53,10 @@ export default defineEventHandler(async (h3) => {
       break;
   }
 
-  const rawFilters: Array<Prisma.GameFindManyArgs & Prisma.GameCountArgs> = [];
+  // Apply before pagination, and use the same scope for the total count.
+  const rawFilters: Array<Prisma.GameFindManyArgs & Prisma.GameCountArgs> = [
+    { where: { type: { not: "Emulator" } } },
+  ];
   if (query.filters && query.filters.length > 0) {
     const filterSet = new Set(query.filters);
     if (filterSet.has("version.none")) {
