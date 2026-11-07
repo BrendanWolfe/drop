@@ -16,27 +16,47 @@ pub fn scan_install_dirs() {
 }
 
 fn scan_install_dirs_db(db: &mut Database) {
-    for install_dir in db.applications.install_dirs.clone() {
-        let Ok(files) = fs::read_dir(install_dir) else {
+    // Adopt old emulator records in place; never relocate their existing files.
+    let legacy = db.applications.installed_game_version.values().filter(|meta| {
+        remote::cache::get_cached_object_db::<crate::library::Game>(&format!("game/{}", meta.id), db)
+            .is_ok_and(|game| game.game_type == "Emulator")
+            || db.applications.game_versions.get(&meta.version).is_some_and(|version| version.launches.iter().any(|launch| launch.emulator_profile.is_some()))
+            || !crate::emulators::required_by(db, meta).is_empty()
+    }).map(|meta| meta.id.clone()).collect::<Vec<_>>();
+    for id in legacy { db.applications.migrate_emulator(&id); }
+    let mut directories = db.applications.install_dirs.clone();
+    for directory in db.applications.install_directories(database::install_locations::InstallLocationKind::Emulator) {
+        if !directories.contains(directory) { directories.push(directory.clone()); }
+    }
+    for install_dir in directories {
+        let Ok(files) = fs::read_dir(&install_dir) else {
             continue;
         };
-        for game in files.into_iter().flatten() {
-            let drop_data_file = game.path().join(DROPDATA_PATH);
+        let mut paths = files.flatten().map(|entry| entry.path()).collect::<Vec<_>>();
+        // New emulator builds are direct siblings of games. Keep discovering
+        // the old hidden container for recovery, without moving existing files.
+        if let Ok(builds) = fs::read_dir(install_dir.join(".drop-emulators")) {
+            paths.extend(builds.flatten().map(|entry| entry.path()));
+        }
+        for path in paths {
+            let drop_data_file = path.join(DROPDATA_PATH);
             if !drop_data_file.exists() {
                 continue;
             }
-            let drop_data = match DropData::read(&game.path()) {
+            let drop_data = match DropData::read(&path) {
                 Ok(v) => v,
                 Err(err) => {
                     warn!(
                         ".dropdata exists for {}, but couldn't read it. is it corrupted? {:?}",
-                        game.file_name().display(),
+                        path.display(),
                         err
                     );
                     continue;
                 }
             };
-            if matches!(
+            let emulator = drop_data.emulator || remote::cache::get_cached_object_db::<crate::library::Game>(&format!("game/{}", drop_data.game_id), db).is_ok_and(|game| game.game_type == "Emulator");
+            if emulator && db.applications.emulator_installation(&drop_data.game_id, &drop_data.game_version, drop_data.target_platform).is_some() { continue; }
+            if !emulator && matches!(
                 db.applications.game_statuses.get(&drop_data.game_id),
                 Some(GameDownloadStatus::Installed { .. })
             ) {
@@ -47,12 +67,12 @@ fn scan_install_dirs_db(db: &mut Database) {
                 drop_data.game_id,
                 drop_data.game_version,
                 drop_data.target_platform,
-                DownloadType::Game,
+                if emulator { DownloadType::Emulator } else { DownloadType::Game },
             );
             set_partially_installed_db(
                 db,
                 &metadata,
-                drop_data.base_path.to_str().unwrap().to_string(),
+                path.to_string_lossy().into_owned(),
                 None,
                 drop_data.configuration,
             );
@@ -145,6 +165,58 @@ mod tests {
         assert_eq!(metadata.version, version);
         assert_eq!(metadata.target_platform, Platform::HOST);
         assert_eq!(metadata.download_type, DownloadType::Game);
+    }
+
+    #[test]
+    fn scan_recovers_emulators_from_their_separate_locations() {
+        let games = tempfile::tempdir().unwrap();
+        let emulators = tempfile::tempdir().unwrap();
+        let configuration = test_configuration();
+        create_drop_data(emulators.path(), "emulator", "1.2.3", configuration.clone());
+        let mut db = database_with_install_dir(games.path());
+        db.applications.emulator_install_dirs = Some(vec![emulators.path().to_path_buf()]);
+        scan_install_dirs_db(&mut db);
+        assert_recovered(&db, emulators.path(), "emulator", "1.2.3", &configuration);
+    }
+
+    #[test]
+    fn scan_recovers_visible_side_by_side_and_legacy_emulator_builds() {
+        let root = tempfile::tempdir().unwrap();
+        let mut db = database_with_install_dir(root.path());
+        for (version, folder) in [
+            ("v1", "dolphin-5.0"),
+            ("v2", "dolphin-6.0"),
+            ("v3", ".drop-emulators/legacy-hex-build-Linux"),
+        ] {
+            let path = root.path().join(folder);
+            fs::create_dir_all(&path).unwrap();
+            let mut data = DropData::new(
+                "dolphin".into(),
+                version.into(),
+                Platform::Linux,
+                path,
+                test_configuration(),
+                None,
+            );
+            data.emulator = true;
+            data.write();
+        }
+        scan_install_dirs_db(&mut db);
+        scan_install_dirs_db(&mut db);
+        assert_eq!(db.applications.emulator_installations.len(), 3);
+        assert!(db.applications.game_statuses.is_empty());
+        for (version, folder) in [
+            ("v1", "dolphin-5.0"),
+            ("v2", "dolphin-6.0"),
+            ("v3", ".drop-emulators/legacy-hex-build-Linux"),
+        ] {
+            let installation = db.applications
+                .emulator_installation("dolphin", version, Platform::Linux)
+                .unwrap();
+            assert!(matches!(&installation.status,
+                GameDownloadStatus::Installed { install_dir, .. }
+                    if std::path::Path::new(install_dir) == root.path().join(folder)));
+        }
     }
 
     #[test]

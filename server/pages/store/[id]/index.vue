@@ -23,6 +23,48 @@
         {{ game.mName }}
       </h1>
 
+      <section
+        v-if="game.isEmulated || emulatorRequirements.length"
+        class="mt-6 rounded-lg bg-blue-950/30 p-4 ring-1 ring-inset ring-blue-400/20"
+        aria-labelledby="emulator-requirements"
+      >
+        <EmulatedBadge />
+        <h2
+          id="emulator-requirements"
+          class="mt-3 text-sm font-semibold text-zinc-100"
+        >
+          {{ $t("emulators.requiredVersions") }}
+        </h2>
+        <p class="mt-1 text-sm text-zinc-400">
+          {{ $t("emulators.installHelp") }}
+        </p>
+        <ul v-if="emulatorRequirements.length" class="mt-3 space-y-2">
+          <li
+            v-for="requirement in emulatorRequirements"
+            :key="`${requirement.gameVersionId}:${requirement.versionId}:${requirement.platform}`"
+            class="text-sm text-zinc-200"
+          >
+            <span class="font-semibold">{{ requirement.emulatorName }}</span>
+            <span class="ml-2 font-mono text-blue-200">{{
+              requirement.versionName
+            }}</span>
+            <span class="ml-2 text-zinc-400">
+              {{ requirement.platform }}
+            </span>
+            <span class="ml-2 text-zinc-400">
+              {{
+                $t("emulators.forGameVersion", {
+                  version: requirement.gameVersionName,
+                })
+              }}
+            </span>
+          </li>
+        </ul>
+        <p v-else class="mt-3 text-sm text-zinc-400">
+          {{ $t("emulators.requirementsUnavailable") }}
+        </p>
+      </section>
+
       <div
         class="mt-8 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-10"
       >
@@ -295,9 +337,8 @@ const gameId = route.params.id.toString();
 
 const user = useUser();
 
-const { game, rating, sizes, platforms } = await $dropFetch(
-  `/api/v1/games/${gameId}`,
-);
+const { game, rating, sizes, platforms, emulatorRequirements } =
+  await $dropFetch(`/api/v1/games/${gameId}`);
 
 const isClient = isClientRequest();
 

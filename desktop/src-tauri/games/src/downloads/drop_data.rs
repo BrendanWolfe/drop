@@ -29,6 +29,8 @@ pub mod v1 {
         pub contexts: Mutex<HashMap<String, bool>>,
         pub base_path: PathBuf,
         pub previously_installed_version: Option<String>,
+        #[serde(default)]
+        pub emulator: bool,
     }
 
     impl DropData {
@@ -48,6 +50,7 @@ pub mod v1 {
                 contexts: Mutex::new(HashMap::new()),
                 configuration,
                 previously_installed_version,
+                emulator: false,
             }
         }
     }
@@ -63,7 +66,10 @@ impl DropData {
     ) -> Self {
         match DropData::read(&base_path) {
             Ok(v) => {
-                if v.game_id != game_id || v.game_version != game_version {
+                if v.game_id != game_id
+                    || v.game_version != game_version
+                    || v.target_platform != target_platform
+                {
                     return DropData::new(
                         game_id,
                         game_version,

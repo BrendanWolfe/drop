@@ -125,6 +125,7 @@ export class MetadataHandler {
     libraryId: string,
     libraryPath: string,
     type: GameType,
+    isEmulated = false,
   ) {
     return await this.createGame(
       {
@@ -135,6 +136,7 @@ export class MetadataHandler {
       libraryId,
       libraryPath,
       type,
+      isEmulated,
     );
   }
 
@@ -197,6 +199,7 @@ export class MetadataHandler {
     libraryId: string,
     libraryPath: string,
     type: GameType,
+    isEmulated = false,
   ) {
     const provider = this.providers.get(result.sourceId);
     if (!provider)
@@ -317,6 +320,7 @@ export class MetadataHandler {
             libraryPath,
 
             type,
+            isEmulated,
           },
         });
 

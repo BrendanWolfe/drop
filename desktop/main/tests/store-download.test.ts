@@ -66,6 +66,43 @@ test("a new game downloads the latest version with one configured folder", () =>
   );
 });
 
+test("native quick downloads use the saved default when multiple locations exist", () => {
+  assert.equal(
+    canStartStoreDownload(
+      { type: "Remote" },
+      [{}],
+      ["/games", "/other-games"],
+      1,
+    ),
+    true,
+  );
+  assert.equal(
+    canStartStoreDownload({ type: "Remote" }, [{}], ["/games"], 99),
+    true,
+  );
+  assert.equal(
+    canStartStoreDownload(
+      { type: "Remote" },
+      [{}],
+      ["/games", "/other-games"],
+      99,
+    ),
+    false,
+  );
+});
+
+test("emulated quick downloads keep both location selectors available", () => {
+  assert.equal(
+    canStartStoreDownload(
+      { type: "Remote" },
+      [{ requiredContent: [{ gameId: "emulator" }] }],
+      ["/games"],
+      0,
+    ),
+    false,
+  );
+});
+
 test("downloads wait for a folder choice or compatible version", () => {
   for (const [versions, dirs] of [
     [undefined, undefined],
@@ -79,6 +116,25 @@ test("downloads wait for a folder choice or compatible version", () => {
       false,
     );
   }
+});
+
+test("Store quick downloads do not skip the Proton setup warning", () => {
+  assert.equal(
+    canStartStoreDownload(
+      { type: "Remote" },
+      [{ protonSetupRequired: true }],
+      ["/games"],
+    ),
+    false,
+  );
+  assert.equal(
+    canStartStoreDownload(
+      { type: "Remote" },
+      [{ protonSetupRequired: false }],
+      ["/games"],
+    ),
+    true,
+  );
 });
 
 test("existing installations and active downloads are not queued again", () => {

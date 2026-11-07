@@ -242,6 +242,41 @@
     "listItem": "List Item",
     "listItemPlaceholder": "list item"
   },
+  "emulators": {
+    "add": "Add emulator",
+    "addConfig": "Add configuration file",
+    "archiveExample": "Library / Emulator name / 1.0.zip",
+    "archiveHelp": "Add portable emulator ZIPs to a library, just like game versions. Import the emulator, then import each version and configure its launch command. Include the complete portable program, not an installer.",
+    "badge": "Emulated game",
+    "cli": "Launch the game directly (CLI)",
+    "configContent": "Configuration template",
+    "configFiles": "Automatic configuration",
+    "configHelp": "Optional first-run templates, created in a private folder for each game. Pass the configuration-directory placeholder in your emulator command to use them. Existing files are preserved. In JSON templates, use a :json placeholder without surrounding quotes for correctly escaped paths.",
+    "configPath": "Path inside the configuration folder",
+    "description": "Manage portable emulators and their versions. Drop downloads the selected emulator with each game and prepares its launch configuration.",
+    "editRequirements": "Edit emulator requirements",
+    "editRequirementsHelp": "Change the emulator and exact version used by each launch option. Game files, ROM paths and the game version stay unchanged. Update all launch options that share an emulator on the same platform before saving. Online desktop clients refresh these requirements and download missing emulators through Update.",
+    "empty": "No emulators found. Add an emulator to get started.",
+    "emulatedGame": "This game requires an emulator",
+    "emulatedGameHelp": "Choose the emulator and exact version when importing each game version. The game remains visible in the store.",
+    "forGameVersion": "Game version: {version}",
+    "installHelp": "Drop installs the exact emulator version required by your selected game version and platform.",
+    "launchMode": "Launch mode",
+    "loadError": "Could not load emulators. Please try again.",
+    "manage": "Manage versions and configuration →",
+    "next": "Next",
+    "noVersions": "No versions imported yet",
+    "pagination": "Emulator pages",
+    "previous": "Previous",
+    "profileHelp": "CLI commands need a quoted ROM placeholder. UI commands open the emulator without a ROM; pass the game folder or a generated configuration using the placeholders below. Quote each path placeholder as a single argument.",
+    "removeConfig": "Remove configuration file",
+    "requiredVersions": "Required emulator versions",
+    "requirementsUnavailable": "No emulator requirements have been published yet.",
+    "saveRequirements": "Save requirements",
+    "title": "Emulators",
+    "ui": "Open the emulator first (UI)",
+    "versionHelp": "Select an emulator and version for each launch option. Enter the game file relative to its install folder, or use a dot (.) for UI-first emulators that scan the whole game folder. Desktop clients currently keep one active version per emulator; games using different versions may require a version switch."
+  },
   "errors": {
     "admin": {
       "user": {
@@ -682,6 +717,11 @@
     "title": "Latest News"
   },
   "options": "Options",
+  "proton": {
+    "allowLinux": "Allow on Linux using Proton",
+    "eligibilityHelp": "Makes this Windows build available on Linux through Proton. This does not mean compatibility has been tested. Linux builds are for native Linux executables.",
+    "saveError": "Could not save Proton eligibility. Please try again."
+  },
   "selectLanguage": "Select language",
   "services": {
     "nginx": {

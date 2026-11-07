@@ -22,6 +22,7 @@ import { GameType, type Platform } from "~/prisma/client/enums";
 import { castManifest } from "./manifest/utils";
 import { Shescape } from "shescape";
 import type { Prisma } from "~/prisma/client/client";
+import { validateEmulatorProfile } from "./emulator-profile";
 
 export function createGameImportTaskId(libraryId: string, libraryPath: string) {
   return createHash("md5")
@@ -463,9 +464,69 @@ class LibraryManager {
 
     const game = await prisma.game.findUnique({
       where: { id: gameId },
-      select: { mName: true, libraryId: true, libraryPath: true, type: true },
+      select: {
+        mName: true,
+        libraryId: true,
+        libraryPath: true,
+        type: true,
+        isEmulated: true,
+      },
     });
     if (!game || !game.libraryId) return undefined;
+
+    if (game.isEmulated && metadata.onlySetup)
+      throw createError({
+        statusCode: 400,
+        message: "Emulated games cannot be setup-only.",
+      });
+    if (game.type === GameType.Emulator && metadata.onlySetup)
+      throw createError({
+        statusCode: 400,
+        message:
+          "Emulators must be portable programs, not setup-only packages.",
+      });
+    for (const launch of metadata.launches) {
+      if (!launch.launch.trim())
+        throw createError({
+          statusCode: 400,
+          message:
+            "Launch paths cannot be empty. Use . for a UI-first game folder.",
+        });
+      if (game.isEmulated && !launch.emulatorId)
+        throw createError({
+          statusCode: 400,
+          message: "Select an emulator version for every emulated game launch.",
+        });
+      if (launch.emulatorProfile) {
+        if (game.type !== GameType.Emulator)
+          throw createError({
+            statusCode: 400,
+            message: "Only emulators can define emulator profiles.",
+          });
+        const error = validateEmulatorProfile(
+          launch.emulatorProfile,
+          launch.launch,
+        );
+        if (error) throw createError({ statusCode: 400, message: error });
+      }
+      if (launch.emulatorId) {
+        const emulator = await prisma.launchConfiguration.findUnique({
+          where: { launchId: launch.emulatorId },
+          include: { gameVersion: { include: { game: true } } },
+        });
+        if (
+          game.type !== GameType.Game ||
+          !emulator ||
+          emulator.gameVersion.game.type !== GameType.Emulator ||
+          emulator.gameVersion.onlySetup ||
+          emulator.platform !== launch.platform
+        )
+          throw createError({
+            statusCode: 400,
+            message: "Select a portable emulator launch for the same platform.",
+          });
+      }
+    }
 
     if (game.type === GameType.Dependency && !metadata.onlySetup)
       throw createError({
@@ -482,6 +543,12 @@ class LibraryManager {
             where: { id: version.identifier },
           })
         : undefined;
+
+    if (version.type === "depot" && unimportedVersion?.gameId !== gameId)
+      throw createError({
+        statusCode: 400,
+        message: "Uploaded version does not belong to this game.",
+      });
 
     return await taskHandler.create(
       {
@@ -556,6 +623,8 @@ class LibraryManager {
                   data: metadata.setups.map((v) => ({
                     command: v.launch,
                     platform: v.platform,
+                    protonCompatible:
+                      v.platform === "Windows" && !!v.protonCompatible,
                   })),
                 },
               },
@@ -567,6 +636,8 @@ class LibraryManager {
                         name: v.name,
                         command: v.launch,
                         platform: v.platform,
+                        protonCompatible:
+                          v.platform === "Windows" && !!v.protonCompatible,
                         ...(v.emulatorId && game.type === "Game"
                           ? {
                               emulatorId: v.emulatorId,
@@ -574,6 +645,9 @@ class LibraryManager {
                           : undefined),
                         emulatorSuggestions:
                           game.type === "Emulator" ? (v.suggestions ?? []) : [],
+                        ...(v.emulatorProfile
+                          ? { emulatorProfile: v.emulatorProfile }
+                          : {}),
                       })),
                     }
                   : { data: [] },
@@ -625,6 +699,16 @@ class LibraryManager {
   }
 
   async deleteGameVersion(gameId: string, version: string) {
+    if (
+      await prisma.launchConfiguration.count({
+        where: { emulator: { versionId: version, gameVersion: { gameId } } },
+      })
+    )
+      throw createError({
+        statusCode: 409,
+        message:
+          "This emulator version is required by game launches. Remove those versions before deleting it.",
+      });
     await prisma.gameVersion.deleteMany({
       where: {
         gameId: gameId,
@@ -634,6 +718,16 @@ class LibraryManager {
   }
 
   async deleteGame(gameId: string) {
+    if (
+      await prisma.launchConfiguration.count({
+        where: { emulator: { gameVersion: { gameId } } },
+      })
+    )
+      throw createError({
+        statusCode: 409,
+        message:
+          "This emulator is required by game launches. Remove those versions before deleting it.",
+      });
     await prisma.game.deleteMany({
       where: {
         id: gameId,

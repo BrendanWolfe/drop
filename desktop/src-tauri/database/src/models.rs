@@ -9,6 +9,7 @@ pub mod data {
     pub type Database = v1::Database;
     pub type GameVersion = v1::GameVersion;
     pub type Settings = v1::Settings;
+    pub type DesktopUpdateHistory = v1::DesktopUpdateHistory;
     pub type DatabaseAuth = v1::DatabaseAuth;
 
     pub type GameDownloadStatus = v1::GameDownloadStatus;
@@ -20,24 +21,34 @@ pub mod data {
     pub type DownloadableMetadata = v1::DownloadableMetadata;
     pub type DownloadType = v1::DownloadType;
     pub type DatabaseApplications = v1::DatabaseApplications;
+    pub type EmulatorInstallation = v1::EmulatorInstallation;
     pub type UserConfiguration = v1::UserConfiguration;
     pub type LocalGame = v1::LocalGame;
     pub type ArchiveInstall = v1::ArchiveInstall;
     pub type ArchiveState = v1::ArchiveState;
     pub type LaunchConfiguration = v1::LaunchConfiguration;
     pub type LaunchConfigurationEmulator = v1::LaunchConfigurationEmulator;
+    pub type EmulatorProfile = v1::EmulatorProfile;
+    pub type EmulatorLaunchMode = v1::EmulatorLaunchMode;
+    pub type EmulatorConfigFile = v1::EmulatorConfigFile;
 
     use std::collections::HashMap;
 
     impl PartialEq for DownloadableMetadata {
         fn eq(&self, other: &Self) -> bool {
             self.id == other.id && self.download_type == other.download_type
+                && (self.download_type != DownloadType::Emulator
+                    || (self.version == other.version && self.target_platform == other.target_platform))
         }
     }
     impl Hash for DownloadableMetadata {
         fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
             self.id.hash(state);
             self.download_type.hash(state);
+            if self.download_type == DownloadType::Emulator {
+                self.version.hash(state);
+                self.target_platform.hash(state);
+            }
         }
     }
 
@@ -45,6 +56,7 @@ pub mod data {
     enum DatabaseVersionEnum {
         V0_4_0 { database: v1::Database },
         V0_4_4 { database: v1::Database },
+        V0_4_8 { database: v1::Database },
     }
 
     pub struct DatabaseVersionSerializable(pub(crate) Database);
@@ -57,7 +69,9 @@ pub mod data {
             // Older clients automatically uninstall entries whose server cache
             // is missing. Do not let them interpret local folder registrations
             // as server installations: use a new format tag when locals exist.
-            let version = if self.0.applications.local_games.is_empty() {
+            let version = if !self.0.applications.emulator_installations.is_empty() {
+                DatabaseVersionEnum::V0_4_8 { database: self.0.clone() }
+            } else if self.0.applications.local_games.is_empty() {
                 DatabaseVersionEnum::V0_4_0 { database: self.0.clone() }
             } else {
                 DatabaseVersionEnum::V0_4_4 { database: self.0.clone() }
@@ -72,7 +86,7 @@ pub mod data {
             D: serde::Deserializer<'de>,
         {
             Ok(match DatabaseVersionEnum::deserialize(deserializer)? {
-                DatabaseVersionEnum::V0_4_0 { database } | DatabaseVersionEnum::V0_4_4 { database } => DatabaseVersionSerializable(database),
+                DatabaseVersionEnum::V0_4_0 { database } | DatabaseVersionEnum::V0_4_4 { database } | DatabaseVersionEnum::V0_4_8 { database } => DatabaseVersionSerializable(database),
             })
         }
     }
@@ -92,6 +106,12 @@ pub mod data {
                 override_handler: None,
                 enable_updates: false,
             }
+        }
+
+        // Preserve launches already installed by clients predating eligibility.
+        // Updated servers always send an explicit value; new downloads opt in.
+        fn legacy_proton_compatible() -> bool {
+            true
         }
 
         #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -139,9 +159,33 @@ pub mod data {
             pub name: String,
             pub command: String,
             pub platform: Platform,
+            #[serde(default = "legacy_proton_compatible")]
+            pub proton_compatible: bool,
             pub umu_id_override: Option<String>,
 
             pub emulator: Option<LaunchConfigurationEmulator>,
+            #[serde(default)]
+            pub emulator_profile: Option<EmulatorProfile>,
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+        #[serde(rename_all = "camelCase")]
+        pub struct EmulatorProfile {
+            pub mode: EmulatorLaunchMode,
+            pub config_files: Vec<EmulatorConfigFile>,
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+        #[serde(rename_all = "lowercase")]
+        pub enum EmulatorLaunchMode {
+            Cli,
+            Ui,
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+        pub struct EmulatorConfigFile {
+            pub path: String,
+            pub content: String,
         }
 
         #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -160,6 +204,8 @@ pub mod data {
         pub struct SetupConfiguration {
             pub command: String,
             pub platform: Platform,
+            #[serde(default = "legacy_proton_compatible")]
+            pub proton_compatible: bool,
         }
 
         /// Device-local entries are authoritative here, never in the server cache.
@@ -213,6 +259,8 @@ pub mod data {
             /// Aggregate download speed limit in bytes per second. 0 means unlimited.
             #[serde(default)]
             pub max_download_speed: u64,
+            #[serde(default = "automatic_updates_enabled")]
+            pub automatic_client_updates: bool,
             pub force_offline: bool, // ... other settings ...
         }
         impl Default for Settings {
@@ -221,9 +269,22 @@ pub mod data {
                     autostart: false,
                     max_download_threads: 4,
                     max_download_speed: 0,
+                    automatic_client_updates: true,
                     force_offline: false,
                 }
             }
+        }
+
+        fn automatic_updates_enabled() -> bool {
+            true
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Debug, Default)]
+        #[serde(rename_all = "camelCase")]
+        pub struct DesktopUpdateHistory {
+            pub last_checked: Option<u64>,
+            pub last_updated: Option<u64>,
+            pub last_seen_version: Option<String>,
         }
 
         #[derive(Serialize, Clone, Deserialize, Debug)]
@@ -274,6 +335,7 @@ pub mod data {
         )]
         pub enum DownloadType {
             Game,
+            Emulator,
             Tool,
             Dlc,
             Mod,
@@ -303,11 +365,25 @@ pub mod data {
             }
         }
 
+        #[derive(Serialize, Clone, Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        pub struct EmulatorInstallation {
+            pub metadata: DownloadableMetadata,
+            pub status: GameDownloadStatus,
+        }
+
         #[serde_as]
         #[derive(Serialize, Clone, Deserialize, Default)]
         #[serde(rename_all = "camelCase")]
         pub struct DatabaseApplications {
             pub install_dirs: Vec<PathBuf>,
+            // Legacy databases inherit their existing locations until first edited.
+            #[serde(default)]
+            pub emulator_install_dirs: Option<Vec<PathBuf>>,
+            #[serde(default)]
+            pub default_install_dir: Option<PathBuf>,
+            #[serde(default)]
+            pub default_emulator_install_dir: Option<PathBuf>,
             #[serde(default)]
             pub local_games: HashMap<String, LocalGame>,
             // Guaranteed to exist if the game also exists in the app state map
@@ -315,6 +391,8 @@ pub mod data {
 
             pub game_versions: HashMap<String, GameVersion>,
             pub installed_game_version: HashMap<String, DownloadableMetadata>,
+            #[serde(default)]
+            pub emulator_installations: HashMap<String, EmulatorInstallation>,
 
             pub additional_proton_paths: Vec<String>,
             pub default_proton_path: Option<String>,
@@ -325,6 +403,8 @@ pub mod data {
 
         #[derive(Serialize, Deserialize, Clone, Default)]
         pub struct Database {
+            #[serde(default)]
+            pub desktop_update_history: DesktopUpdateHistory,
             #[serde(default)]
             pub steam_registrations: HashMap<String, steam_shortcuts::Registration>,
             #[serde(default)]
@@ -353,17 +433,23 @@ pub mod data {
             prev_database: Option<PathBuf>,
             cache_dir: PathBuf,
         ) -> Self {
+            let games_base_dir = games_base_dir.into();
             Self {
+                desktop_update_history: Default::default(),
                 proxy_auth: HashMap::new(),
                 steam_registrations: HashMap::new(),
                 steam_profile: None,
                 proxy_auth_cleanup: Default::default(),
                 applications: DatabaseApplications {
-                    install_dirs: vec![games_base_dir.into()],
+                    install_dirs: vec![games_base_dir.clone()],
+                    emulator_install_dirs: Some(vec![games_base_dir]),
+                    default_install_dir: None,
+                    default_emulator_install_dir: None,
                     local_games: HashMap::new(),
                     game_statuses: HashMap::new(),
                     game_versions: HashMap::new(),
                     installed_game_version: HashMap::new(),
+                    emulator_installations: HashMap::new(),
                     transient_statuses: HashMap::new(),
                     additional_proton_paths: Vec::new(),
                     default_proton_path: None,
@@ -395,6 +481,26 @@ pub mod data {
     #[cfg(test)]
     mod tests {
         use super::{Database, InstalledGameType, Settings, UserConfiguration};
+
+        #[test]
+        fn legacy_launches_default_to_no_emulator_profile() {
+            let launch: super::LaunchConfiguration = ron::from_str(
+                r#"(launchId:"launch",name:"Play",command:"emulator '{rom}'",platform:Linux,umuIdOverride:None,emulator:None)"#,
+            )
+            .unwrap();
+            assert!(launch.emulator_profile.is_none());
+            let mut launch = launch;
+            launch.emulator_profile = Some(super::EmulatorProfile {
+                mode: super::EmulatorLaunchMode::Ui,
+                config_files: vec![super::EmulatorConfigFile {
+                    path: "settings.json".into(),
+                    content: "{gameDir:json}".into(),
+                }],
+            });
+            let encoded = ron::to_string(&launch).unwrap();
+            let decoded: super::LaunchConfiguration = ron::from_str(&encoded).unwrap();
+            assert_eq!(decoded, launch);
+        }
 
         #[test]
         fn legacy_database_defaults_to_no_proxy_authentication() {

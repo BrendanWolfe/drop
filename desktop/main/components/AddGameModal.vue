@@ -68,6 +68,8 @@
           v-if="directories.length"
           :install-dirs="directories"
           v-model="installDir"
+          label="Game location"
+          :default-index="defaultIndex"
         />
         <p class="text-xs text-zinc-500">
           Extracts directly into a new folder. Drop credentials are never sent
@@ -105,6 +107,7 @@
 
 <script setup lang="ts">
 import { invoke } from "@tauri-apps/api/core";
+import { defaultInstallIndex } from "~/utils/install-locations";
 const visible = defineModel<boolean>();
 const mode = ref<"existing" | "url">("existing");
 const modes = [
@@ -114,13 +117,17 @@ const modes = [
 const name = ref("");
 const url = ref("");
 const installDir = ref(0);
+const defaultIndex = ref<number | null>(null);
 const busy = ref(false);
 const error = ref("");
 const directories = ref<string[]>([]);
 const router = useRouter();
 onMounted(async () => {
   try {
-    directories.value = await invoke<string[]>("fetch_download_dir_stats");
+    const locations = (await fetchInstallLocations()).game;
+    directories.value = locations.directories;
+    defaultIndex.value = locations.defaultIndex;
+    installDir.value = defaultInstallIndex(locations);
   } catch (e) {
     error.value = String(e);
   }
@@ -137,7 +144,7 @@ async function download() {
       await invoke<string>("download_archive", {
         name: name.value,
         url: url.value,
-        installDir: installDir.value,
+        installPath: directories.value[installDir.value],
       }),
     );
   } catch (e) {

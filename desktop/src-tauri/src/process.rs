@@ -25,7 +25,7 @@ pub fn get_process_handlers(id: String) -> Result<Vec<ProcessHandlerOption>, Pro
 #[serde(tag = "result", content = "data")]
 pub enum LaunchResult {
     Success,
-    InstallRequired(String, String),
+    InstallRequired(String, String, database::platform::Platform),
 }
 
 #[tauri::command]
@@ -37,11 +37,12 @@ pub fn launch_game(id: String, index: usize) -> Result<LaunchResult, ProcessErro
     };
 
     if let Err(err) = &result
-        && let ProcessError::RequiredDependency(game_id, version_id) = err
+        && let ProcessError::RequiredDependency(game_id, version_id, platform) = err
     {
         return Ok(LaunchResult::InstallRequired(
             game_id.to_string(),
             version_id.to_string(),
+            *platform,
         ));
     }
 

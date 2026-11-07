@@ -13,6 +13,27 @@ export interface DesktopUpdateStatus {
   downloaded: number;
   total: number | null;
   error: string | null;
+  version?: string;
+  releaseTag?: string | null;
+  automaticUpdates?: boolean;
+  lastChecked?: number | null;
+  lastUpdated?: number | null;
+  disabledReason?: string | null;
+}
+
+export function updateTimestamp(
+  value: number | null | undefined,
+): { iso: string; label: string } | undefined {
+  if (value == null || !Number.isFinite(value) || value < 0) return;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return;
+  return {
+    iso: date.toISOString(),
+    label: date.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }),
+  };
 }
 
 export function updateButtonLabel(status: DesktopUpdateStatus): string {

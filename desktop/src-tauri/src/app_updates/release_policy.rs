@@ -39,6 +39,8 @@ pub(super) fn should_offer_update(
     tag: &str,
     current_tag: &str,
 ) -> bool {
+    // Main can publish rebuilds without bumping the application version. Never
+    // offer the already installed tag or downgrade to a lower application version.
     tag != current_tag && remote >= current
 }
 
@@ -61,14 +63,14 @@ mod tests {
     }
 
     #[test]
-    fn selects_only_stable_main_desktop_releases() {
+    fn selects_newest_stable_main_desktop_release() {
         let mut develop = release("dev", "2026-11-08T00:00:00Z");
         develop.prerelease = true;
         develop.target_commitish = "develop".into();
         let mut mislabeled = release("develop-without-prerelease-flag", "2026-11-09T00:00:00Z");
         mislabeled.target_commitish = "develop".into();
-        let mut candidate = release("main-rc", "2026-11-10T00:00:00Z");
-        candidate.prerelease = true;
+        let mut main_prerelease = release("main-release-candidate", "2026-11-10T00:00:00Z");
+        main_prerelease.prerelease = true;
         let mut draft = release("draft", "2026-11-11T00:00:00Z");
         draft.draft = true;
         let mut server = release("server-only", "2026-11-12T00:00:00Z");
@@ -76,15 +78,15 @@ mod tests {
         let releases = vec![
             develop,
             mislabeled,
-            candidate,
+            main_prerelease,
             draft,
             server,
-            release("v0.4.5+updater.1", "2026-11-06T00:00:00Z"),
+            release("v0.4.5+build.42", "2026-11-06T00:00:00Z"),
             release("v0.4.5+build.41", "2026-11-05T00:00:00Z"),
         ];
         assert_eq!(
             newest_release(&releases).unwrap().tag_name,
-            "v0.4.5+updater.1"
+            "v0.4.5+build.42"
         );
     }
 
@@ -100,31 +102,58 @@ mod tests {
     }
 
     #[test]
-    fn legacy_client_accepts_same_version_bridge_then_new_client_does_not_repeat_it() {
+    fn offers_new_versions_and_rebuilds_but_not_installed_tags_or_downgrades() {
         let current = Version::parse("0.4.5").unwrap();
-        assert!(should_offer_update(
-            &current,
-            &current,
-            "v0.4.5+updater.1",
-            "v0.4.5-build.14"
-        ));
-        assert!(!should_offer_update(
-            &current,
-            &current,
-            "v0.4.5+updater.1",
-            "v0.4.5+updater.1"
-        ));
         assert!(should_offer_update(
             &current,
             &Version::parse("0.4.6").unwrap(),
             "v0.4.6",
-            "v0.4.5+updater.1"
+            "v0.4.5"
+        ));
+        assert!(should_offer_update(
+            &current,
+            &current,
+            "v0.4.5+build.2",
+            "v0.4.5+build.1"
+        ));
+        assert!(!should_offer_update(
+            &current,
+            &current,
+            "v0.4.5+build.2",
+            "v0.4.5+build.2"
         ));
         assert!(!should_offer_update(
             &current,
             &Version::parse("0.4.4").unwrap(),
             "v0.4.4",
+            "v0.4.5"
+        ));
+    }
+
+    #[test]
+    fn legacy_client_accepts_same_version_bridge_then_new_client_does_not_repeat_it() {
+        let version = Version::parse("0.4.5").unwrap();
+        assert!(should_offer_update(
+            &version,
+            &version,
+            "v0.4.5+updater.1",
+            "v0.4.5-build.14"
+        ));
+        assert!(!should_offer_update(
+            &version,
+            &version,
+            "v0.4.5+updater.1",
             "v0.4.5+updater.1"
+        ));
+    }
+
+    #[test]
+    fn emulator_dev_build_cannot_be_replaced_by_the_older_stable_bridge() {
+        assert!(!should_offer_update(
+            &Version::parse("0.4.6").unwrap(),
+            &Version::parse("0.4.5").unwrap(),
+            "v0.4.5+updater.1",
+            "v0.4.6-dev.1"
         ));
     }
 }

@@ -74,7 +74,7 @@
       <template #item="{ element }: ListIterable">
         <li
           v-if="games[element.meta.id]"
-          :key="element.meta.id"
+          :key="`${element.meta.id}:${element.meta.version}:${element.meta.targetPlatform}`"
           class="mb-4 bg-zinc-900 rounded-lg flex flex-row justify-between gap-x-6 py-5 px-4"
         >
           <div class="w-full flex items-center max-w-md gap-x-4 relative">
@@ -85,13 +85,33 @@
             />
             <div class="min-w-0 flex-auto">
               <p class="text-xl font-semibold text-zinc-100">
-                <NuxtLink :href="element.meta.id.startsWith('local-') ? `/library/local/${element.meta.id}` : `/library/${element.meta.id}`" class="">
+                <NuxtLink
+                  :href="
+                    element.meta.downloadType === 'Emulator'
+                      ? '/emulators'
+                      : element.meta.id.startsWith('local-')
+                        ? `/library/local/${element.meta.id}`
+                        : `/library/${element.meta.id}`
+                  "
+                  class=""
+                >
                   <span class="absolute inset-x-0 -top-px bottom-0" />
                   {{ games[element.meta.id]!.game.mName }}
                 </NuxtLink>
+                <span
+                  v-if="games[element.meta.id]!.game.type === 'Emulator'"
+                  class="ml-2 rounded bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-200"
+                  >Emulator</span
+                >
               </p>
               <p class="mt-1 flex text-xs/5 text-gray-500">
                 {{ games[element.meta.id]!.game.mShortDescription }}
+              </p>
+              <p
+                v-if="element.meta.downloadType === 'Emulator'"
+                class="mt-1 text-xs text-zinc-400"
+              >
+                {{ element.meta.version }} · {{ element.meta.targetPlatform }}
               </p>
             </div>
           </div>
@@ -154,7 +174,32 @@
             </button>
           </div>
         </li>
-        <p v-else>Loading...</p>
+        <li v-else class="mb-4 rounded-lg bg-zinc-900 p-4 text-zinc-300">
+          <p>
+            {{ element.meta.id }}
+            <span class="ml-2 text-sm text-zinc-500">{{
+              element.meta.version
+            }}</span>
+          </p>
+          <p class="mt-1 text-sm text-zinc-400">{{ element.status }}</p>
+          <p
+            v-if="metadataErrors[element.meta.id]"
+            role="alert"
+            class="mt-2 text-sm text-amber-200"
+          >
+            Could not load download details. The download is still in the queue.
+          </p>
+          <p v-else class="mt-2 text-sm text-zinc-400">
+            Loading download details…
+          </p>
+          <button
+            type="button"
+            class="mt-2 min-h-10 rounded-md bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+            @click="cancelGame(element.meta)"
+          >
+            Cancel download
+          </button>
+        </li>
       </template>
     </draggable>
     <div
@@ -210,8 +255,8 @@ const downloadControlError = ref<string | undefined>(undefined);
 const downloadControlPending = computed(
   () => pendingDownloadAction.value !== undefined,
 );
-const downloadControlAction = computed(() =>
-  pendingDownloadAction.value ?? (isPaused.value ? "resume" : "pause"),
+const downloadControlAction = computed(
+  () => pendingDownloadAction.value ?? (isPaused.value ? "resume" : "pause"),
 );
 const downloadControlLabel = computed(() => {
   if (pendingDownloadAction.value === "pause") return "Pausing...";
@@ -241,6 +286,8 @@ type ListIterable = { element: (typeof queue.value.queue)[0] };
 const games: Ref<{
   [key: string]: { game: Game; status: Ref<GameStatus>; cover: string };
 }> = ref({});
+const metadataErrors = ref<Record<string, boolean>>({});
+const loadingMetadata = new Set<string>();
 
 function resetHistoryGraph() {
   speedHistory.value = [];
@@ -308,11 +355,19 @@ function loadGamesForQueue(v: typeof queue.value) {
   for (const {
     meta: { id },
   } of v.queue) {
-    if (games.value[id]) continue;
+    if (games.value[id] || loadingMetadata.has(id) || metadataErrors.value[id])
+      continue;
+    loadingMetadata.add(id);
     (async () => {
-      const gameData = await useGame(id);
-      const cover = await useObject(gameData.game.mCoverObjectId);
-      games.value[id] = { ...gameData, cover };
+      try {
+        const gameData = await useGame(id);
+        const cover = await useObject(gameData.game.mCoverObjectId);
+        games.value[id] = { ...gameData, cover };
+      } catch {
+        metadataErrors.value[id] = true;
+      } finally {
+        loadingMetadata.delete(id);
+      }
     })();
   }
 }

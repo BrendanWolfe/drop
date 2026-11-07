@@ -9,6 +9,7 @@ const ImportGameBody = type({
   library: "string",
   path: "string",
   type: type.valueOf(GameType),
+  isEmulated: "boolean = false",
   ["metadata?"]: {
     id: "string",
     sourceId: "string",
@@ -21,10 +22,14 @@ export default defineEventHandler<{ body: typeof ImportGameBody.infer }>(
     const allowed = await aclManager.allowSystemACL(h3, ["import:game:new"]);
     if (!allowed) throw createError({ statusCode: 403 });
 
-    const { library, path, metadata, type } = await readDropValidatedBody(
-      h3,
-      ImportGameBody,
-    );
+    const { library, path, metadata, type, isEmulated } =
+      await readDropValidatedBody(h3, ImportGameBody);
+
+    if (isEmulated && type !== GameType.Game)
+      throw createError({
+        statusCode: 400,
+        message: "Only games can be marked as emulated.",
+      });
 
     if (!path)
       throw createError({
@@ -40,8 +45,19 @@ export default defineEventHandler<{ body: typeof ImportGameBody.infer }>(
       });
 
     const taskId = metadata
-      ? await metadataHandler.createGame(metadata, library, path, type)
-      : await metadataHandler.createGameWithoutMetadata(library, path, type);
+      ? await metadataHandler.createGame(
+          metadata,
+          library,
+          path,
+          type,
+          isEmulated,
+        )
+      : await metadataHandler.createGameWithoutMetadata(
+          library,
+          path,
+          type,
+          isEmulated,
+        );
 
     if (!taskId)
       throw createError({

@@ -1,8 +1,11 @@
 #![feature(nonpoison_rwlock)]
 
 pub mod db;
+pub mod client_updates;
 pub mod debug;
 pub mod interface;
+pub mod install_locations;
+pub mod emulator_installations;
 pub mod models;
 pub mod platform;
 

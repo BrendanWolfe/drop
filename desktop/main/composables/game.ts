@@ -66,13 +66,16 @@ export const useGame = async (gameId: string) => {
 
 export type LaunchResult =
   | { result: "Success" }
-  | { result: "InstallRequired"; data: [string, string] };
+  | { result: "InstallRequired"; data: [string, string, string] };
 
 export type VersionOption = {
   versionId: string;
   displayName?: string;
   versionPath: string;
   platform: string;
+  installedPlatform?: string | null;
+  runtime: "native" | "proton";
+  protonSetupRequired: boolean;
   size: {
     installSize: number;
     downloadSize: number;
@@ -80,6 +83,9 @@ export type VersionOption = {
   requiredContent: Array<{
     gameId: string;
     versionId: string;
+    launchIds?: string[];
+    versionName?: string | null;
+    installedPath?: string | null;
     name: string;
     iconObjectId: string;
     shortDescription: string;

@@ -1,7 +1,14 @@
 name: Build and release server
 
 on:
-  workflow_dispatch: {}
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      tagName:
+        required: false
+        type: string
+        description: "Optional version tag for this server image."
   release:
     types: [published]
   # This can be used to automatically publish nightlies at UTC nighttime
@@ -11,10 +18,62 @@ on:
 env:
   REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
 
+concurrency:
+  group: server-release-${{ github.event_name == 'schedule' && 'develop' || github.event.release.target_commitish || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
-  build:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
-      today: ${{ steps.get_final_ver.outputs.today }}
+      today: ${{ steps.source.outputs.today }}
+      branch: ${{ steps.channel.outputs.branch }}
+      prerelease: ${{ steps.channel.outputs.prerelease }}
+      version: ${{ steps.channel.outputs.tag }}
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ github.event_name == 'schedule' && 'develop' || github.sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      - name: Test release channel policy
+        run: node --test .github/scripts/release-channel.test.mjs
+
+      - name: Resolve release channel
+        id: channel
+        env:
+          DROP_VERSION_FILE: server/package.json
+        run: node .github/scripts/release-channel.mjs
+
+      - name: Verify branch provenance
+        env:
+          RELEASE_BRANCH: ${{ steps.channel.outputs.branch }}
+        run: git merge-base --is-ancestor HEAD "origin/$RELEASE_BRANCH"
+
+      - name: Pin the source for every architecture
+        id: source
+        run: |
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "today=$(date +'%Y.%m.%d')" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    outputs:
+      today: ${{ needs.prepare.outputs.today }}
+      branch: ${{ needs.prepare.outputs.branch }}
+      prerelease: ${{ needs.prepare.outputs.prerelease }}
+      version: ${{ needs.prepare.outputs.version }}
+      commit: ${{ needs.prepare.outputs.commit }}
     strategy:
       fail-fast: false
       matrix:
@@ -28,13 +87,10 @@ jobs:
       packages: write
       contents: read
     steps:
-      - name: Check out the repo
+      - name: Check out the pinned source
         uses: actions/checkout@v7
         with:
-          fetch-depth: 3 # fix for when this gets triggered by tag
-          fetch-tags: true
-          ref: ${{ github.ref }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ needs.prepare.outputs.commit }}
 
       - name: Prepare
         run: |
@@ -47,6 +103,9 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY_IMAGE }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.commit }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
 
       - name: Login to Docker Hub
         uses: docker/login-action@v4
@@ -61,28 +120,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Determine final version
-        id: get_final_ver
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          BASE_VER=v$(jq -r '.version' server/package.json)
-          TODAY=$(date +'%Y.%m.%d')
-
-          echo "Today will be: $TODAY"
-          echo "today=$TODAY" >> "$GITHUB_OUTPUT"
-
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            FINAL_VER="$RELEASE_TAG"
-          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            FINAL_VER="$GITHUB_REF_NAME"
-          else
-            FINAL_VER="${BASE_VER}-nightly.$TODAY"
-          fi
-
-          echo "Drop's release tag will be: $FINAL_VER"
-          echo "final_ver=$FINAL_VER" >> "$GITHUB_OUTPUT"
-
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v7
@@ -94,8 +131,8 @@ jobs:
           provenance: mode=max
           sbom: true
           build-args: |
-            BUILD_DROP_VERSION=${{ steps.get_final_ver.outputs.final_ver }}
-            BUILD_GIT_REF=${{ github.sha }}
+            BUILD_DROP_VERSION=${{ needs.prepare.outputs.version }}
+            BUILD_GIT_REF=${{ needs.prepare.outputs.commit }}
 
       - name: Export digest
         run: |
@@ -144,17 +181,20 @@ jobs:
         with:
           images: |
             ${{ env.REGISTRY_IMAGE }}
+          flavor: latest=false
           tags: |
-            type=schedule,pattern=nightly
-            type=schedule,pattern=nightly.${{ needs.build.outputs.today }}
-            type=semver,pattern=v{{version}}
-            type=semver,pattern=v{{major}}.{{minor}}
-            type=semver,pattern=v{{major}}
-            type=ref,event=branch,prefix=branch-
-            type=ref,event=pr
-            type=sha
+            type=raw,value=nightly,enable=${{ needs.build.outputs.prerelease == 'true' }}
+            type=raw,value=nightly.${{ needs.build.outputs.today }},enable=${{ needs.build.outputs.prerelease == 'true' }}
+            type=raw,value=${{ needs.build.outputs.branch }}
+            type=raw,value=${{ needs.build.outputs.version }},enable=${{ needs.build.outputs.prerelease == 'false' }}
+            type=raw,value=develop-${{ needs.build.outputs.version }},enable=${{ needs.build.outputs.prerelease == 'true' }}
+            type=semver,pattern=v{{version}},value=${{ needs.build.outputs.version }},enable=${{ needs.build.outputs.prerelease == 'false' }}
+            type=semver,pattern=v{{major}}.{{minor}},value=${{ needs.build.outputs.version }},enable=${{ needs.build.outputs.prerelease == 'false' }}
+            type=semver,pattern=v{{major}},value=${{ needs.build.outputs.version }},enable=${{ needs.build.outputs.prerelease == 'false' }}
+            type=raw,value=branch-${{ needs.build.outputs.branch }}
+            type=raw,value=sha-${{ needs.build.outputs.commit }}
             # set latest tag for stable releases
-            type=raw,value=latest,enable=${{ github.event_name == 'release' && github.event.release.prerelease == false }}
+            type=raw,value=latest,enable=${{ needs.build.outputs.prerelease == 'false' }}
 
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests

@@ -24,6 +24,33 @@ test("separate devices downloading the same game get separate cards", () => {
   assert.equal(registry.snapshot(0).length, 2);
 });
 
+test("emulator downloads appear alongside game downloads", () => {
+  const registry = new DownloadRegistry();
+  registry.replace(
+    "client",
+    "boot",
+    1,
+    [
+      entry,
+      {
+        ...entry,
+        sessionId: "emulator-session",
+        gameId: "emulator",
+        versionId: "pinned-emulator-version",
+        gameTitle: "Example emulator",
+      },
+    ],
+    0,
+  );
+  assert.deepEqual(
+    registry
+      .snapshot(0)
+      .map((download) => download.gameId)
+      .sort(),
+    ["emulator", "game"],
+  );
+});
+
 test("stale sessions stop contributing bandwidth and expire", () => {
   const registry = new DownloadRegistry();
   registry.replace("client", "boot", 1, [entry], 0);

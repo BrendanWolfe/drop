@@ -64,6 +64,7 @@ mod collections;
 mod download_manager;
 mod downloads;
 mod games;
+mod emulators;
 mod process;
 mod remote;
 mod logging;
@@ -73,6 +74,7 @@ mod download_reporting;
 mod scheduler;
 mod settings;
 mod updates;
+mod version_options;
 
 use client::*;
 use download_manager::*;
@@ -245,6 +247,7 @@ pub fn run() {
             quit,
             fetch_system_data,
             app_updates::desktop_update_status,
+            app_updates::set_desktop_automatic_updates,
             app_updates::check_desktop_update,
             app_updates::install_desktop_update,
             open_fs,
@@ -268,9 +271,14 @@ pub fn run() {
             // Library
             fetch_library,
             fetch_game,
+            emulators::fetch_installed_emulators,
+            emulators::uninstall_emulator,
+            emulators::fetch_missing_emulators,
             add_download_dir,
             delete_download_dir,
             fetch_download_dir_stats,
+            fetch_install_locations,
+            set_default_download_dir,
             fetch_game_status,
             fetch_game_version_options,
             update_game_configuration,

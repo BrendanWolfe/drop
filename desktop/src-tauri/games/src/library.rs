@@ -101,8 +101,8 @@ pub fn set_partially_installed_db(
     configuration: UserConfiguration,
 ) {
     db_lock.applications.transient_statuses.remove(meta);
-    db_lock.applications.game_statuses.insert(
-        meta.id.clone(),
+    db_lock.applications.record_installation(
+        meta,
         GameDownloadStatus::Installed {
             install_type: InstalledGameType::PartiallyInstalled { configuration },
             version_id: meta.version.clone(),
@@ -110,10 +110,11 @@ pub fn set_partially_installed_db(
             update_available: false,
         },
     );
-    db_lock
-        .applications
-        .installed_game_version
-        .insert(meta.id.clone(), meta.clone());
+
+    if meta.download_type == database::DownloadType::Emulator {
+        if let Some(app_handle) = app_handle { app_emit!(app_handle, "update_library", ()); }
+        return;
+    }
 
     if let Some(app_handle) = app_handle {
         push_game_update(
@@ -239,10 +240,6 @@ pub async fn on_game_complete(
         .applications
         .game_versions
         .insert(meta.version.clone(), game_version.clone());
-    handle
-        .applications
-        .installed_game_version
-        .insert(meta.id.clone(), meta.clone());
 
     drop(handle);
 
@@ -263,12 +260,13 @@ pub async fn on_game_complete(
     };
 
     let mut db_handle = borrow_db_mut_checked();
-    db_handle
-        .applications
-        .game_statuses
-        .insert(meta.id.clone(), status.clone());
+    db_handle.applications.record_installation(meta, status.clone());
     db_handle.applications.transient_statuses.remove(meta);
     drop(db_handle);
+    if meta.download_type == database::DownloadType::Emulator {
+        app_emit!(app_handle, "update_library", ());
+        return Ok(());
+    }
     app_emit!(
         app_handle,
         &format!("update_game/{}", meta.id),

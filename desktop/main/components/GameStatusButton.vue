@@ -4,6 +4,7 @@
     <button
       type="button"
       @click="() => fetchStatusStyleData($props.status).action()"
+      :disabled="status.type === 'Installed' && checkingDependencies"
       :class="[
         fetchStatusStyleData($props.status).style,
         showDropdown ? 'rounded-l-md' : 'rounded-md',
@@ -56,8 +57,8 @@
                   'w-full px-4 py-2 text-sm inline-flex justify-between',
                 ]"
               >
-                Install
-                <ArrowDownTrayIcon class="size-5" />
+                Change version…
+                <ArrowsRightLeftIcon class="size-5" />
               </button>
             </MenuItem>
 
@@ -133,9 +134,14 @@ import {
   FolderOpenIcon,
   TrashIcon,
 } from "@heroicons/vue/24/outline";
-import { ArrowsRightLeftIcon, ArrowUpTrayIcon } from "@heroicons/vue/24/solid";
+import { ArrowsRightLeftIcon } from "@heroicons/vue/24/solid";
 
-const props = defineProps<{ status: GameStatus }>();
+const props = defineProps<{
+  status: GameStatus;
+  requiresUpdate?: boolean;
+  updatingDependencies?: boolean;
+  checkingDependencies?: boolean;
+}>();
 const emit = defineEmits<{
   (e: "install"): void;
   (e: "launch"): void;
@@ -145,6 +151,7 @@ const emit = defineEmits<{
   (e: "options"): void;
   (e: "open-folder"): void;
   (e: "resume"): void;
+  (e: "update"): void;
 }>();
 
 interface StatusStyleData {
@@ -156,6 +163,26 @@ interface StatusStyleData {
 
 function fetchStatusStyleData(status: GameStatus): StatusStyleData {
   if (status.type === "Installed") {
+    if (props.checkingDependencies) {
+      return {
+        style: "bg-zinc-800 text-zinc-400 cursor-wait",
+        buttonName: "Checking…",
+        icon: ServerIcon,
+        action: () => {},
+      };
+    }
+    if (
+      props.requiresUpdate &&
+      status.install_type.type === InstalledType.Installed
+    ) {
+      return {
+        style: "bg-blue-600 text-white hover:bg-blue-500 focus-visible:outline-blue-600",
+        buttonName: props.updatingDependencies ? "Updating" : "Update",
+        icon: ArrowDownTrayIcon,
+        action: () =>
+          props.updatingDependencies ? emit("queue") : emit("update"),
+      };
+    }
     if (status.install_type.type === InstalledType.Installed) {
       return {
         style:

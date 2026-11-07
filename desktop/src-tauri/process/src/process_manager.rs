@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     fs::{OpenOptions, create_dir_all},
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, ExitStatus},
     sync::Arc,
     thread::spawn,
@@ -260,6 +260,37 @@ impl ProcessManager<'_> {
         process_handler.is_ok()
     }
 
+    pub fn proton_ready(&self, game_id: &str) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            let db = borrow_db_checked();
+            if self
+                .fetch_process_handler(&db, &Platform::Windows, None)
+                .is_err()
+            {
+                return false;
+            }
+            let configuration = db.applications.installed_game_version
+                .get(game_id)
+                .and_then(|meta| db.applications.game_versions.get(&meta.version))
+                .map(|version| &version.user_configuration);
+            let path = configuration
+                .and_then(|config| config.override_proton_path.as_ref())
+                .or(db.applications.default_proton_path.as_ref());
+            path.is_some_and(|path| {
+                crate::compat::read_proton_path(path.into())
+                    .ok()
+                    .flatten()
+                    .is_some()
+            })
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = game_id;
+            false
+        }
+    }
+
     pub fn get_process_handlers(
         &self,
         game_id: String,
@@ -314,6 +345,7 @@ impl ProcessManager<'_> {
             .launches
             .iter()
             .filter(|v| v.platform == meta.target_platform)
+            .filter(|v| v.platform.can_run_on(Platform::HOST, v.proton_compatible))
             .map(|v| LaunchOption {
                 name: v.name.clone(),
             })
@@ -401,11 +433,19 @@ impl ProcessManager<'_> {
 
         let target_platform = meta.target_platform;
 
-        let process_handler = self.fetch_process_handler(
-            &db_lock,
-            &target_platform,
-            game_version.user_configuration.override_handler.as_deref(),
-        )?;
+        let mut process_handler = self
+            .fetch_process_handler(
+                &db_lock,
+                &target_platform,
+                game_version.user_configuration.override_handler.as_deref(),
+            )
+            .map_err(|error| {
+                if Platform::HOST == Platform::Linux && target_platform == Platform::Windows {
+                    ProcessError::NoCompat
+                } else {
+                    error
+                }
+            })?;
         debug!("using process handler {:?}", process_handler.id());
 
         let (target_command, emulator) = match game_status {
@@ -417,6 +457,7 @@ impl ProcessManager<'_> {
                     .launches
                     .iter()
                     .filter(|v| v.platform == target_platform)
+                    .filter(|v| v.platform.can_run_on(Platform::HOST, v.proton_compatible))
                     .enumerate()
                     .find(|(i, _)| *i == launch_process_index)
                     .ok_or(ProcessError::NotInstalled)?;
@@ -432,7 +473,10 @@ impl ProcessManager<'_> {
                 let setup_config = game_version
                     .setups
                     .iter()
-                    .find(|v| v.platform == target_platform)
+                    .find(|v| {
+                        v.platform == target_platform
+                            && v.platform.can_run_on(Platform::HOST, v.proton_compatible)
+                    })
                     .ok_or(ProcessError::NotInstalled)?;
 
                 (setup_config.command.clone(), None)
@@ -440,38 +484,21 @@ impl ProcessManager<'_> {
             _ => unreachable!("Game registered as 'Partially Installed'"),
         };
 
-        let mut target_command = ParsedCommand::parse(target_command)?;
+        let target_command = ParsedCommand::parse(target_command)?;
+        let mut emulator_working_directory = None;
 
         let target_launch_string = if let Some(emulator) = emulator {
             let err = ProcessError::RequiredDependency(
                 emulator.game_id.clone(),
                 emulator.version_id.clone(),
+                target_platform,
             );
 
-            let emulator_metadata = db_lock
-                .applications
-                .installed_game_version
-                .get(&emulator.game_id)
-                .ok_or(err.clone())?;
-
-            let emulator_game_status = db_lock
-                .applications
-                .game_statuses
-                .get(&emulator.game_id)
-                .ok_or(err.clone())?;
-
-            let emulator_install_dir = match emulator_game_status {
-                GameDownloadStatus::Installed {
-                    install_type: InstalledGameType::Installed,
-                    install_dir,
-                    ..
-                } => Ok(install_dir),
-                GameDownloadStatus::Installed {
-                    install_type: InstalledGameType::SetupRequired,
-                    ..
-                } => todo!(),
-                _ => Err(err.clone()),
-            }?;
+            let (emulator_metadata, _) = games::emulators::installed_emulator(&db_lock, &emulator.game_id, &emulator.version_id, target_platform).ok_or(err.clone())?;
+            let emulator_install_dir = games::emulators::emulator_install_path(
+                &db_lock, &emulator.game_id, &emulator.version_id, target_platform,
+                std::slice::from_ref(&emulator.launch_id), Platform::HOST,
+            ).ok_or(err.clone())?;
 
             let emulator_game_version = db_lock
                 .applications
@@ -483,23 +510,29 @@ impl ProcessManager<'_> {
                 .launches
                 .iter()
                 .find(|v| v.launch_id == emulator.launch_id)
+                .filter(|v| v.platform == target_platform)
+                .filter(|v| v.platform.can_run_on(Platform::HOST, v.proton_compatible))
                 .ok_or(err)?;
 
-            let mut exe_command = ParsedCommand::parse(emulator_launch_config.command.clone())?;
-            exe_command.env.extend(target_command.env.clone());
-            exe_command.make_absolute(emulator_install_dir.into());
-
-            target_command.make_absolute(PathBuf::from(install_dir.clone()));
-
-            exe_command.args.iter_mut().for_each(|v| {
-                *v = v.replace("{rom}", &target_command.command);
-            });
+            let exe_command = crate::emulator::prepare(
+                emulator_launch_config,
+                &target_command,
+                Path::new(install_dir),
+                Path::new(&emulator_install_dir),
+                &emulator.version_id,
+            )?;
+            emulator_working_directory = Some(PathBuf::from(&emulator_install_dir));
+            process_handler = self.fetch_process_handler(
+                &db_lock,
+                &target_platform,
+                emulator_game_version.user_configuration.override_handler.as_deref(),
+            )?;
 
             process_handler.create_launch_process(
                 emulator_metadata,
                 exe_command.reconstruct(),
                 emulator_game_version,
-                install_dir,
+                &emulator_install_dir,
                 &db_lock,
             )?
         } else {
@@ -513,8 +546,13 @@ impl ProcessManager<'_> {
         };
 
         let resolved = crate::resolution::finish_command(
-            target_launch_string, install_dir, game_version,
-            db_lock.applications.local_games.get(&meta.id).map(|local| local.working_directory.as_path()),
+            target_launch_string,
+            install_dir,
+            game_version,
+            emulator_working_directory.as_deref().or_else(|| {
+                db_lock.applications.local_games.get(&meta.id)
+                    .map(|local| local.working_directory.as_path())
+            }),
         )?;
         let launch_parameters = resolved.command;
         launch_parameters.ensure_executable()?;
@@ -527,13 +565,9 @@ impl ProcessManager<'_> {
             for parts in launch_parameters
                 .env
                 .into_iter()
-                .map(|e| e.split("=").map(|v| v.to_string()).collect::<Vec<String>>())
+                .filter_map(|e| e.split_once('=').map(|(key, value)| (key.to_owned(), value.to_owned())))
             {
-                if let Some(key) = parts.first()
-                    && let Some(value) = parts.get(1)
-                {
-                    command.env(key, value);
-                }
+                command.env(parts.0, parts.1);
             }
             command
         };

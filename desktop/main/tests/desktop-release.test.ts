@@ -10,17 +10,28 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { releaseChannel } from "../../../.github/scripts/release-channel.mjs";
 
 const workflow = readFileSync(
   new URL("../../../.github/workflows/client-release.yml", import.meta.url),
   "utf8",
 );
-const script = workflow
-  .match(/node --input-type=module <<'NODE'\r?\n([\s\S]*?)\r?\n\s*NODE/)?.[1]
-  ?.replace(/^ {10}/gm, "");
-assert.ok(script, "The desktop release configuration script must exist");
+const script = readFileSync(
+  new URL(
+    "../../../.github/scripts/configure-desktop-updater.mjs",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
-function configureRelease(tag: string) {
+function configureRelease(tag: string, branch = "develop") {
+  const channel = releaseChannel({
+    eventName: "workflow_dispatch",
+    ref: `refs/heads/${branch}`,
+    event: { inputs: { tagName: tag } },
+    version: "0.4.5",
+    runNumber: "42",
+  });
   const directory = mkdtempSync(join(tmpdir(), "drop-release-test-"));
   try {
     mkdirSync(join(directory, "desktop/src-tauri"), { recursive: true });
@@ -34,7 +45,7 @@ function configureRelease(tag: string) {
       cwd: directory,
       env: {
         ...process.env,
-        DROP_RELEASE_TAG: tag,
+        DROP_RELEASE_TAG: channel.tag,
         DROP_UPDATER_PUBLIC_KEY: "  fixture-public-key\n",
         GITHUB_ENV: envFile,
         GITHUB_RUN_NUMBER: "42",
@@ -61,8 +72,23 @@ test("release bundling receives the verification key as well as signed-artifact 
   assert.equal(config.plugins.updater.pubkey, "fixture-public-key");
 });
 
+test("RPM libarchive dependencies use literal names, not version expressions", () => {
+  const config = JSON.parse(
+    readFileSync(new URL("../../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+  );
+  // Tauri passes RPM dependencies to rpm::Dependency::any without parsing them.
+  assert.deepEqual(config.bundle.linux.rpm.depends, ["libarchive"]);
+  assert.deepEqual(config.bundle.linux.deb.depends, [
+    "libarchive13 (>= 3.4) | libarchive13t64 (>= 3.4)",
+  ]);
+});
+
 test("the embedded default tag matches the workflow build number", () => {
-  assert.equal(configureRelease("").env, "DROP_RELEASE_TAG=v0.4.5-build.42\n");
+  assert.equal(configureRelease("").env, "DROP_RELEASE_TAG=v0.4.5-dev.42\n");
+  assert.equal(
+    configureRelease("", "main").env,
+    "DROP_RELEASE_TAG=v0.4.5+build.42\n",
+  );
 });
 
 test("explicit release tags resolve the version placeholder", () => {
@@ -76,21 +102,73 @@ test("release tags cannot inject extra GitHub environment variables", () => {
   assert.throws(() => configureRelease("v0.4.5\nOTHER=value"));
 });
 
-test("the updater bridge remains a draft until all platforms finish, then targets stable main", () => {
+test("both branches publish, but only main exposes an automatic-update manifest", () => {
+  assert.match(workflow, /push:\s+branches: \[main, develop\]/);
+  assert.ok(
+    workflow.includes(
+      "includeUpdaterJson: ${{ needs.prepare.outputs.prerelease == 'false' }}",
+    ),
+  );
+  assert.ok(
+    workflow.includes(
+      "prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}",
+    ),
+  );
+  assert.ok(
+    workflow.includes("releaseCommitish: ${{ needs.prepare.outputs.branch }}"),
+  );
+});
+
+test("automatic releases pin their tag and stay drafts until every platform succeeds", () => {
+  assert.ok(
+    workflow.includes(
+      'git merge-base --is-ancestor HEAD "origin/$RELEASE_BRANCH"',
+    ),
+  );
+  assert.ok(workflow.includes('"repos/$GITHUB_REPOSITORY/git/refs"'));
+  assert.ok(workflow.includes('"sha=$(git rev-parse HEAD)"'));
   assert.ok(
     workflow.includes("releaseDraft: ${{ github.event_name != 'release' }}"),
   );
-  assert.ok(workflow.includes("includeUpdaterJson:"));
-  assert.ok(workflow.includes("needs: publish-tauri"));
+  assert.ok(workflow.includes("needs: [prepare, publish-tauri]"));
+  assert.ok(workflow.includes('--draft=false --latest="$STABLE"'));
+});
+
+test("development server builds cannot move stable Docker tags", () => {
+  const serverWorkflow = readFileSync(
+    new URL("../../../.github/workflows/server-release.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(serverWorkflow, /push:\s+branches: \[main, develop\]/);
+  assert.ok(serverWorkflow.includes("flavor: latest=false"));
   assert.ok(
-    workflow.includes(
-      "if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'",
+    serverWorkflow.includes(
+      "type=raw,value=develop-${{ needs.build.outputs.version }},enable=${{ needs.build.outputs.prerelease == 'true' }}",
     ),
   );
   assert.ok(
-    workflow.includes(
-      "--target main --draft=false --prerelease=false --latest",
+    serverWorkflow.includes(
+      "type=raw,value=${{ needs.build.outputs.version }},enable=${{ needs.build.outputs.prerelease == 'false' }}",
     ),
   );
-  assert.ok(workflow.includes("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}"));
+  assert.ok(
+    serverWorkflow.includes(
+      "type=raw,value=latest,enable=${{ needs.build.outputs.prerelease == 'false' }}",
+    ),
+  );
+  for (const line of serverWorkflow
+    .split("\n")
+    .filter((line) => line.includes("type=semver"))) {
+    assert.ok(
+      line.includes("enable=${{ needs.build.outputs.prerelease == 'false' }}"),
+    );
+  }
+  assert.ok(
+    serverWorkflow.includes(
+      "ref: ${{ github.event_name == 'schedule' && 'develop' || github.sha }}",
+    ),
+  );
+  assert.ok(
+    serverWorkflow.includes("ref: ${{ needs.prepare.outputs.commit }}"),
+  );
 });

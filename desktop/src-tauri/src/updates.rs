@@ -6,13 +6,13 @@ use database::{
     GameDownloadStatus, GameVersion, borrow_db_checked, borrow_db_mut_checked,
 };
 use log::warn;
-use process::PROCESS_MANAGER;
 use remote::utils::DROP_APP_HANDLE;
 use tauri::Manager;
 
 use crate::{
-    games::{VersionDownloadOption, fetch_game_version_options},
+    games::fetch_game_version_options,
     scheduler::ScheduleTask,
+    version_options::has_update,
 };
 
 pub struct GameUpdater {
@@ -52,7 +52,7 @@ impl ScheduleTask for GameUpdater {
 
         self.no_internet = false;
 
-        let to_check: Vec<GameVersion> = {
+        let to_check: Vec<(GameVersion, database::platform::Platform)> = {
             let db_lock = borrow_db_checked();
 
             
@@ -72,11 +72,16 @@ impl ScheduleTask for GameUpdater {
                     v.map(|v| v.user_configuration.enable_updates && !db_lock.applications.local_games.contains_key(&v.game_id))
                         .unwrap_or(false)
                 })
-                .map(|v| v.cloned().unwrap())
+                .filter_map(|v| {
+                    let version = v?;
+                    let meta = db_lock.applications.installed_game_version
+                        .get(&version.game_id)?;
+                    Some((version.clone(), meta.target_platform))
+                })
                 .collect()
         };
 
-        for version in to_check {
+        for (version, installed_platform) in to_check {
             let version_options =
                 match fetch_game_version_options(version.game_id.clone(), state.clone()).await {
                     Ok(v) => v,
@@ -89,20 +94,20 @@ impl ScheduleTask for GameUpdater {
                     }
                 };
 
-            let process_manager_lock = PROCESS_MANAGER.lock();
-            let valid_options: Vec<VersionDownloadOption> = version_options
-                .into_iter()
-                .filter(|v| process_manager_lock.valid_platform(&v.platform))
-                .collect();
-
-            let latest = match valid_options.first() {
-                Some(v) => v,
-                None => {
-                    warn!("found no versions for game id: {}", version.game_id);
-                    continue;
-                }
-            };
+            let has_update = has_update(
+                &version_options,
+                installed_platform,
+                &version.version_id,
+                version.version_index,
+            );
             let mut db_lock = borrow_db_mut_checked();
+            if !db_lock.applications.installed_game_version.get(&version.game_id)
+                .is_some_and(|meta| {
+                    meta.target_platform == installed_platform && meta.version == version.version_id
+                })
+            {
+                continue;
+            }
             let game_status = db_lock
                 .applications
                 .game_statuses
@@ -112,7 +117,7 @@ impl ScheduleTask for GameUpdater {
             if let GameDownloadStatus::Installed {
                     update_available, ..
                 } = game_status {
-                *update_available = latest.version_id != version.version_id;
+                *update_available = has_update;
             };
         }
 

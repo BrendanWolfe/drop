@@ -11,10 +11,12 @@ export default defineEventHandler(async (h3) => {
   const games = await prisma.game.findMany({
     where: {
       featured: true,
+      type: "Game",
       ...ageFilter,
     },
     select: {
       id: true,
+      isEmulated: true,
       mName: true,
       mShortDescription: true,
       mCoverObjectId: true,

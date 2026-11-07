@@ -21,10 +21,11 @@ use remote::{
     requests::generate_url,
     utils::DROP_CLIENT_ASYNC,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::AppHandle;
 
-use crate::{AppState, collections::fetch_collections};
+pub use crate::version_options::VersionDownloadOption;
+use crate::{AppState, collections::fetch_collections, version_options::prepare_options};
 
 #[tauri::command]
 pub async fn fetch_library(
@@ -266,38 +267,9 @@ pub async fn fetch_game_logic(
     Ok(data)
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct VersionDownloadOptionRequiredContent {
-    game_id: String,
-    version_id: String,
-    name: String,
-    icon_object_id: String,
-    short_description: String,
-    size: GameSize,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VersionDownloadOption {
-    pub game_id: String,
-    pub version_id: String,
-    display_name: Option<String>,
-    version_path: String,
-    pub platform: Platform,
-    size: GameSize,
-    required_content: Vec<VersionDownloadOptionRequiredContent>,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GameSize {
-    install_size: usize,
-    download_size: usize,
-}
-
 pub async fn fetch_game_version_options_logic(
     game_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    _state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<Vec<VersionDownloadOption>, RemoteAccessError> {
     if borrow_db_checked().applications.local_games.contains_key(&game_id) {
         return Ok(vec![]);
@@ -328,17 +300,25 @@ pub async fn fetch_game_version_options_logic(
 
     let data: Vec<VersionDownloadOption> = response.json().await?;
 
-    let state_lock = state.lock();
-    let process_manager_lock = PROCESS_MANAGER.lock();
-    let data: Vec<VersionDownloadOption> = data
-        .into_iter()
-        .filter(|v| process_manager_lock.valid_platform(&v.platform))
-        .collect();
-    //data.dedup_by_key(|v| v.platform);
-    drop(process_manager_lock);
-    drop(state_lock);
-
-    Ok(data)
+    let installed = borrow_db_checked().applications.installed_game_version
+        .get(&game_id)
+        .map(|meta| meta.target_platform);
+    let proton_ready = PROCESS_MANAGER.lock().proton_ready(&game_id);
+    let mut options = prepare_options(data, Platform::HOST, installed, proton_ready);
+    let db = borrow_db_checked();
+    for option in &mut options {
+        for dependency in &mut option.required_content {
+            dependency.installed_path = ::games::emulators::emulator_install_path(
+                &db,
+                &dependency.game_id,
+                &dependency.version_id,
+                option.platform,
+                &dependency.launch_ids,
+                Platform::HOST,
+            );
+        }
+    }
+    Ok(options)
 }
 
 pub async fn fetch_game_logic_offline(
@@ -394,7 +374,12 @@ pub fn fetch_game_status(id: String) -> GameStatusWithTransient {
 }
 
 #[tauri::command]
-pub fn uninstall_game(game_id: String, app_handle: AppHandle) -> Result<(), LibraryError> {
+pub fn uninstall_game(
+    game_id: String,
+    version_id: Option<String>,
+    confirmed_dependencies: Option<Vec<String>>,
+    app_handle: AppHandle,
+) -> Result<(), LibraryError> {
     if borrow_db_checked().applications.local_games.contains_key(&game_id) {
         return Err(LibraryError::MetaNotFound(game_id));
     }
@@ -402,6 +387,21 @@ pub fn uninstall_game(game_id: String, app_handle: AppHandle) -> Result<(), Libr
         Some(data) => data,
         None => return Err(LibraryError::MetaNotFound(game_id)),
     };
+    if version_id.is_some_and(|expected| expected != meta.version) {
+        return Err(LibraryError::VersionChanged);
+    }
+    {
+        let db = borrow_db_checked();
+        let dependents = ::games::emulators::required_by(&db, &meta);
+        if !::games::emulators::uninstall_confirmed(&dependents, confirmed_dependencies.as_deref()) {
+            return Err(LibraryError::RequiredByGames);
+        }
+        if db.applications.transient_statuses.keys().any(|item| {
+            item.id == game_id || dependents.iter().any(|dependent| dependent.id == item.id)
+        }) {
+            return Err(LibraryError::Busy);
+        }
+    }
     uninstall_game_logic(meta, &app_handle);
 
     Ok(())

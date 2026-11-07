@@ -1,13 +1,19 @@
 <template>
   <Listbox as="div" v-model="installDir">
-    <ListboxLabel class="block text-sm/6 font-medium text-zinc-100"
-      >Install to</ListboxLabel
-    >
+    <ListboxLabel class="block text-sm/6 font-medium text-zinc-100">{{
+      label
+    }}</ListboxLabel>
     <div class="relative mt-2">
       <ListboxButton
-        class="relative w-full cursor-default rounded-md bg-zinc-800 py-1.5 pl-3 pr-10 text-left text-zinc-100 shadow-sm ring-1 ring-inset ring-zinc-700 focus:outline-none focus:ring-2 focus:ring-blue-600 sm:text-sm/6"
+        :disabled="!installDirs.length"
+        class="relative min-h-10 w-full cursor-default rounded-md bg-zinc-800 py-1.5 pl-3 pr-10 text-left text-zinc-100 shadow-sm ring-1 ring-inset ring-zinc-700 focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:opacity-50 sm:text-sm/6"
       >
-        <span class="block truncate">{{ installDirs[installDir] }}</span>
+        <span class="block truncate"
+          >{{ installDirs[installDir] ?? "No locations configured"
+          }}<span v-if="installDir === defaultIndex" class="ml-2 text-zinc-400"
+            >(Default)</span
+          ></span
+        >
         <span
           class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"
         >
@@ -41,7 +47,10 @@
                   selected ? 'font-semibold text-zinc-100' : 'font-normal',
                   'block truncate',
                 ]"
-                >{{ dir }}</span
+                >{{ dir
+                }}<span v-if="dirIdx === defaultIndex" class="ml-2 text-xs"
+                  >(Default)</span
+                ></span
               >
 
               <span
@@ -83,5 +92,13 @@ import {
 } from "@heroicons/vue/20/solid";
 
 const installDir = defineModel<number>({ required: true });
-const { installDirs } = defineProps<{ installDirs: string[] }>();
+const {
+  installDirs,
+  label = "Install to",
+  defaultIndex = null,
+} = defineProps<{
+  installDirs: string[];
+  label?: string;
+  defaultIndex?: number | null;
+}>();
 </script>

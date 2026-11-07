@@ -203,6 +203,7 @@ import {
   RectangleStackIcon,
   DocumentIcon,
   ArrowDownTrayIcon,
+  CpuChipIcon,
 } from "@heroicons/vue/24/outline";
 import type { NavigationItem } from "~/composables/types";
 import { useCurrentNavigationIndex } from "~/composables/current-page-engine";
@@ -224,6 +225,12 @@ const navigation: Array<NavigationItem & { icon: Component }> = [
     route: "/admin/library",
     prefix: "/admin/library",
     icon: ServerStackIcon,
+  },
+  {
+    label: $t("emulators.title"),
+    route: "/admin/emulators",
+    prefix: "/admin/emulators",
+    icon: CpuChipIcon,
   },
   {
     label: $t("header.admin.metadata"),

@@ -33,7 +33,13 @@
           "
         >
           <div
-            v-if="!version?.userConfiguration?.enableUpdates"
+            v-if="missingEmulators.length"
+            class="absolute mt-1 text-xs text-amber-200"
+          >
+            Required emulator missing · Update to play
+          </div>
+          <div
+            v-else-if="!version?.userConfiguration?.enableUpdates"
             class="absolute mt-1 inline-flex items-center gap-x-1 text-xs text-zinc-400"
           >
             Version pinned
@@ -74,10 +80,21 @@
             @options="() => (configureModalOpen = true)"
             @open-folder="() => openGameFolder()"
             @resume="() => resumeDownload()"
+            @update="repairEmulators"
+            :requires-update="
+              missingEmulators.length > 0 || Boolean(dependencyCheckError)
+            "
+            :updating-dependencies="dependencyDownloadActive"
+            :checking-dependencies="checkingDependencies"
             :status="status"
           />
           <button
-            v-if="status.type === 'Installed' && status.update_available"
+            v-if="
+              status.type === 'Installed' &&
+              status.update_available &&
+              !missingEmulators.length &&
+              !dependencyCheckError
+            "
             class="transition-transform duration-300 hover:scale-105 active:scale-95 inline-flex gap-x-2 items-center rounded-md bg-blue-600 px-6 font-semibold text-white shadow-xl backdrop-blur-sm hover:bg-blue-700 uppercase font-display"
             @click="() => installFlow()"
           >
@@ -96,7 +113,19 @@
             Store
           </NuxtLink>
         </div>
+        <p
+          v-if="dependencyCheckError"
+          role="alert"
+          class="mt-3 text-sm text-red-300"
+        >
+          {{ dependencyCheckError }}. Click Update to retry.
+        </p>
         <SteamActions
+          v-if="
+            !missingEmulators.length &&
+            !dependencyCheckError &&
+            !checkingDependencies
+          "
           ref="steamActions"
           class="mt-3"
           :game-id="game.id"
@@ -214,6 +243,18 @@
     </div>
   </div>
 
+  <EmulatorRepairModal
+    v-if="repairOpen"
+    v-model="repairOpen"
+    :requirements="missingEmulators"
+    @queued="refreshEmulators"
+  />
+  <EmulatorUninstallModal
+    v-if="emulatorToUninstall && emulatorUninstallOpen"
+    v-model="emulatorUninstallOpen"
+    :emulator="emulatorToUninstall"
+  />
+
   <ModalTemplate v-model="installFlowOpen">
     <template #default>
       <div class="sm:flex sm:items-start">
@@ -232,6 +273,41 @@
       </div>
 
       <div class="space-y-6">
+        <div v-if="buildOptions.length">
+          <label
+            for="install-build"
+            class="block text-sm/6 font-medium text-zinc-100"
+            >Build</label
+          >
+          <select
+            id="install-build"
+            v-model="installPlatform"
+            class="mt-2 min-h-10 w-full rounded-md border-zinc-700 bg-zinc-800 text-sm text-zinc-100 focus:border-blue-600 focus:ring-blue-600"
+            @change="installVersionIndex = -1"
+          >
+            <option
+              v-if="
+                !buildOptions.some(
+                  (option) => option.platform === installPlatform,
+                )
+              "
+              :value="installPlatform"
+            >
+              {{ installPlatform }} — Installed build (unavailable)
+            </option>
+            <option
+              v-for="option in buildOptions"
+              :key="option.platform"
+              :value="option.platform"
+            >
+              {{ buildLabel(option) }}
+            </option>
+          </select>
+          <p class="mt-2 text-xs text-zinc-400">
+            Linux builds run natively. Windows builds marked for Proton run
+            through Proton on Linux.
+          </p>
+        </div>
         <div v-if="versionOptions && versionOptions.length > 0">
           <Listbox as="div" v-model="installVersionIndex">
             <ListboxLabel class="block text-sm/6 font-medium text-zinc-100"
@@ -267,9 +343,10 @@
                   </div>
                   <div class="ml-2 flex-1 md:flex md:justify-between">
                     <p class="text-xs text-blue-300">
-                      "Latest" will notify you when there is a new version
-                      available. Choose another version to pin this game's
-                      version.
+                      "Latest" notifies you about new versions of the selected
+                      build. It will not switch between native Linux and
+                      Windows/Proton. Choose a specific version to disable
+                      update notifications.
                     </p>
                   </div>
                 </div>
@@ -340,7 +417,7 @@
                   <ListboxOption
                     as="template"
                     v-for="(version, versionIdx) in versionOptions"
-                    :key="version.versionId"
+                    :key="`${version.versionId}-${version.platform}`"
                     :value="versionIdx"
                     v-slot="{ active, selected }"
                   >
@@ -413,10 +490,36 @@
             <span class="sr-only">Loading...</span>
           </div>
         </div>
+        <div
+          v-if="currentVersionOption?.protonSetupRequired"
+          role="status"
+          class="rounded-md bg-amber-500/10 p-3 text-sm text-amber-200"
+        >
+          <p class="font-semibold">Proton setup required</p>
+          <p class="mt-1">
+            You can download this Windows build now. Before playing, install
+            umu-run and select a Proton version in
+            <NuxtLink to="/settings/compat" class="underline underline-offset-2"
+              >Settings → Compatibility</NuxtLink
+            >.
+          </p>
+        </div>
         <div v-if="installDirs">
           <InstallDirectorySelector
             :install-dirs="installDirs"
             v-model="installDir"
+            :label="
+              game.type === 'Emulator' ? 'Emulator location' : 'Game location'
+            "
+            :default-index="mainLocations?.defaultIndex"
+          />
+          <InstallDirectorySelector
+            v-if="emulatorsToDownload.length"
+            class="mt-4"
+            :install-dirs="installLocations?.emulator.directories ?? []"
+            v-model="emulatorInstallDir"
+            label="Emulator location"
+            :default-index="installLocations?.emulator.defaultIndex"
           />
         </div>
         <div
@@ -426,24 +529,17 @@
           "
         >
           <div class="border-b border-white/10 py-2">
-            <h3 class="text-sm font-semibold text-white">
-              Install additional dependencies?
-            </h3>
+            <h3 class="text-sm font-semibold text-white">Required emulators</h3>
             <p class="mt-1 text-xs text-gray-400">
-              This game requires additional content to run. Click the components
-              to automatically queue for download.
+              Installed builds will be reused. Drop will download only missing
+              emulator builds.
             </p>
           </div>
           <ul role="list" class="mt-2 divide-y divide-white/5">
             <li
               v-for="content in currentVersionOption.requiredContent"
               :key="content.versionId"
-              :class="[
-                !installDepsDisabled[content.versionId]
-                  ? 'bg-zinc-950 ring-2 ring-zinc-800'
-                  : '',
-                'rounded-lg relative flex justify-between px-2 py-3',
-              ]"
+              class="rounded-lg relative flex justify-between bg-zinc-950 ring-2 ring-zinc-800 px-2 py-3"
             >
               <div class="flex min-w-0 gap-x-2">
                 <img
@@ -453,16 +549,21 @@
                 />
                 <div class="min-w-0 flex-auto">
                   <p class="text-sm/6 font-semibold text-white">
-                    <button
-                      @click="
-                        () =>
-                          (installDepsDisabled[content.versionId] =
-                            !installDepsDisabled[content.versionId])
-                      "
+                    {{ content.name }}
+                    <span
+                      v-if="content.versionName"
+                      class="ml-2 font-mono text-blue-200"
+                      >{{ content.versionName }}</span
                     >
-                      <span class="absolute inset-x-0 -top-px bottom-0"></span>
-                      {{ content.name }}
-                    </button>
+                  </p>
+                  <p
+                    v-if="content.installedPath"
+                    class="mt-2 whitespace-normal break-all text-xs text-green-300"
+                  >
+                    Already installed · {{ content.installedPath }}
+                  </p>
+                  <p v-else class="mt-2 text-xs text-blue-200">
+                    Download required
                   </p>
                   <p class="mt-1 flex text-xs/5 text-gray-400">
                     {{ content.shortDescription }}
@@ -479,13 +580,13 @@
                   </p>
                 </div>
                 <CheckIcon
-                  v-if="!installDepsDisabled[content.versionId]"
+                  v-if="content.installedPath"
                   class="size-5 flex-none text-green-500"
                   aria-hidden="true"
                 />
-                <MinusIcon
+                <ArrowDownTrayIcon
                   v-else
-                  class="size-5 flex-none text-gray-500"
+                  class="size-5 flex-none text-blue-300"
                   aria-hidden="true"
                 />
               </div>
@@ -686,20 +787,62 @@ import {
   ArrowDownTrayIcon,
   CheckCircleIcon,
   MapPinIcon,
-  MinusIcon,
   ServerIcon,
   XCircleIcon,
 } from "@heroicons/vue/24/solid";
 import { invoke } from "@tauri-apps/api/core";
-import { InstalledType } from "~/types";
+import {
+  InstalledType,
+  type InstalledEmulator,
+  type InstallLocations,
+} from "~/types";
 import { renderGameDescription } from "~/utils/game-description";
 import { canStartStoreDownload } from "~/utils/store-download";
+import {
+  gameInstallPlan,
+  emulatorRequirementsChanged,
+} from "~/utils/emulator-install";
+import {
+  defaultInstallIndex,
+  installPlanLocations,
+} from "~/utils/install-locations";
+import {
+  availableBuilds,
+  buildLabel,
+  versionsForBuild,
+} from "~/utils/version-options";
 
 const route = useRoute();
 const router = useRouter();
 const id = route.params.id.toString();
 
 const { game, status, version } = await useGame(id);
+const {
+  missing: missingEmulators,
+  loading: checkingDependencies,
+  error: dependencyCheckError,
+  refresh: refreshEmulators,
+} = await useMissingEmulators(id);
+const repairOpen = ref(false);
+const emulatorToUninstall = ref<InstalledEmulator>();
+const emulatorUninstallOpen = ref(false);
+const downloadQueue = useQueueState();
+const dependencyDownloadActive = computed(() =>
+  missingEmulators.value.some((dependency) =>
+    downloadQueue.value.queue.some(
+      (item) =>
+        item.meta.id === dependency.gameId &&
+        item.meta.version === dependency.versionId &&
+        item.meta.targetPlatform === dependency.platform,
+    ),
+  ),
+);
+
+async function repairEmulators() {
+  await refreshEmulators();
+  if (missingEmulators.value.length && !dependencyCheckError.value)
+    repairOpen.value = true;
+}
 
 const bannerUrl = await useObject(game.mBannerObjectId);
 
@@ -710,26 +853,50 @@ function formatPlaytime(seconds: number): string {
 }
 
 const installFlowOpen = ref(false);
-const versionOptions = ref<undefined | Array<VersionOption>>();
+const allVersionOptions = ref<undefined | Array<VersionOption>>();
+const installPlatform = ref("");
+const buildOptions = computed(() =>
+  availableBuilds(allVersionOptions.value ?? []),
+);
+const versionOptions = computed(
+  () =>
+    allVersionOptions.value &&
+    versionsForBuild(allVersionOptions.value, installPlatform.value),
+);
 const installDirs = ref<undefined | Array<string>>();
+const installLocations = ref<InstallLocations>();
+const mainLocations = computed(
+  () =>
+    installLocations.value?.[game.type === "Emulator" ? "emulator" : "game"],
+);
 const currentImageIndex = ref(0);
 
 const configureModalOpen = ref(false);
 
 async function installFlow() {
   installFlowOpen.value = true;
-  versionOptions.value = undefined;
+  allVersionOptions.value = undefined;
   installDirs.value = undefined;
+  installLocations.value = undefined;
   installError.value = undefined;
 
   try {
-    versionOptions.value = await invoke("fetch_game_version_options", {
+    allVersionOptions.value = await invoke("fetch_game_version_options", {
       gameId: game.id,
     });
-    installDirs.value = await invoke("fetch_download_dir_stats");
+    const first = allVersionOptions.value?.[0];
+    installPlatform.value = first?.installedPlatform ?? first?.platform ?? "";
+    installVersionIndex.value = -1;
+    installLocations.value = await fetchInstallLocations();
+    const main = mainLocations.value!;
+    installDirs.value = main.directories;
+    installDir.value = defaultInstallIndex(main);
+    emulatorInstallDir.value = defaultInstallIndex(
+      installLocations.value.emulator,
+    );
   } catch (error) {
     installError.value = (error as string).toString();
-    versionOptions.value = undefined;
+    allVersionOptions.value = undefined;
   }
 }
 
@@ -737,7 +904,7 @@ const installLoading = ref(false);
 const installError = ref<string | undefined>();
 const installVersionIndex = ref(-1);
 const installDir = ref(0);
-const installDepsDisabled = ref<{ [key: string]: boolean }>({});
+const emulatorInstallDir = ref(0);
 
 onMounted(async () => {
   if (route.query.download !== "1") return;
@@ -753,10 +920,10 @@ onMounted(async () => {
       status?.value,
       versionOptions.value,
       installDirs.value,
+      mainLocations.value?.defaultIndex,
     )
   ) {
     installVersionIndex.value = -1;
-    installDir.value = 0;
     await install();
   }
 });
@@ -769,25 +936,73 @@ async function install() {
     if (!installDirs.value?.[installDir.value])
       throw new Error("Select an install folder");
     installLoading.value = true;
-    const versionOption =
+    const selectedOption =
       versionOptions.value[Math.max(installVersionIndex.value, 0)];
-    if (!versionOption) throw new Error("Select a version to install");
+    if (!selectedOption) throw new Error("Select a version to install");
+    // Recheck local readiness and current server pins before skipping dependencies.
+    const refreshed = await invoke<VersionOption[]>(
+      "fetch_game_version_options",
+      { gameId: game.id },
+    );
+    const versionOption = refreshed.find(
+      (option) =>
+        option.versionId === selectedOption.versionId &&
+        option.platform === selectedOption.platform,
+    );
+    if (!versionOption)
+      throw new Error(
+        "The selected build is no longer available. Reopen the install dialog.",
+      );
+    allVersionOptions.value = refreshed;
+    const refreshedBuild = versionsForBuild(refreshed, installPlatform.value);
+    if (
+      installVersionIndex.value === -1 &&
+      refreshedBuild[0]?.versionId !== selectedOption.versionId
+    )
+      throw new Error(
+        "The latest game version changed. Review the selected version, then click Install again.",
+      );
+    if (installVersionIndex.value >= 0)
+      installVersionIndex.value = refreshedBuild.findIndex(
+        (option) => option.versionId === selectedOption.versionId,
+      );
+    if (
+      emulatorRequirementsChanged(
+        selectedOption.requiredContent,
+        versionOption.requiredContent,
+      )
+    )
+      throw new Error(
+        "The emulator requirements changed. Review the locations and requirements, then click Install again.",
+      );
     const isLatest = installVersionIndex.value == -1;
 
-    const games = [
+    const plan = gameInstallPlan(
       { gameId: game.id, versionId: versionOption.versionId },
-      ...versionOption.requiredContent
-        .filter((v) => !installDepsDisabled.value[v.versionId])
-        .map((v) => ({ gameId: v.gameId, versionId: v.versionId })),
-    ];
+      versionOption.requiredContent,
+      isLatest,
+    );
+
+    const games = installPlanLocations(
+      plan,
+      game.id,
+      installDirs.value[installDir.value],
+      installLocations.value?.emulator.directories[emulatorInstallDir.value],
+    );
 
     for (const game of games) {
       await invoke("download_game", {
         gameId: game.gameId,
         versionId: game.versionId,
-        installDir: installDir.value,
+        installPath: game.installPath,
         targetPlatform: versionOption.platform,
-        enableUpdates: isLatest,
+        enableUpdates: game.enableUpdates,
+        reuseInstalled: game.gameId !== id,
+        requiredLaunchIds: versionOption.requiredContent.find(
+          (dependency) =>
+            dependency.gameId === game.gameId &&
+            dependency.versionId === game.versionId,
+        )?.launchIds,
       });
     }
 
@@ -802,11 +1017,18 @@ async function install() {
 const currentVersionOption = computed(
   () => versionOptions.value?.[Math.max(installVersionIndex.value, 0)],
 );
+const emulatorsToDownload = computed(
+  () =>
+    currentVersionOption.value?.requiredContent.filter(
+      (dependency) => !dependency.installedPath,
+    ) ?? [],
+);
 
 function formatVersionOptionText(index: number) {
   if (!versionOptions.value) return undefined;
   const versionOption = versionOptions.value[Math.max(index, 0)];
-  const template = `${versionOption.displayName || versionOption.versionPath} on ${versionOption.platform}, ${formatKilobytes(versionOption.size.installSize / 1024)}B`;
+  if (!versionOption) return undefined;
+  const template = `${versionOption.displayName || versionOption.versionPath} · ${buildLabel(versionOption)}, ${formatKilobytes(versionOption.size.installSize / 1024)}B`;
   if (index == -1) {
     return `Latest (${template})`;
   }
@@ -826,6 +1048,12 @@ const launchOptionsOpen = computed(() => launchOptions.value !== undefined);
 
 const steamActions = ref<{ beforeUninstall: () => Promise<boolean> }>();
 async function launch(direct = false) {
+  if (checkingDependencies.value) return;
+  await refreshEmulators();
+  if (missingEmulators.value.length || dependencyCheckError.value) {
+    await repairEmulators();
+    return;
+  }
   if (
     !direct &&
     status.value.type === "Installed" &&
@@ -895,7 +1123,7 @@ async function launch(direct = false) {
 }
 
 const dependencyRequiredModal = ref<
-  { gameId: string; versionId: string } | undefined
+  { gameId: string; versionId: string; platform: string } | undefined
 >(undefined);
 
 async function launchIndex(index: number) {
@@ -909,6 +1137,7 @@ async function launchIndex(index: number) {
       dependencyRequiredModal.value = {
         gameId: result.data[0],
         versionId: result.data[1],
+        platform: result.data[2],
       };
     }
   } catch (e) {
@@ -929,6 +1158,32 @@ async function queue() {
 }
 
 async function uninstall() {
+  if (game.type === "Emulator") {
+    try {
+      const emulators = await invoke<InstalledEmulator[]>(
+        "fetch_installed_emulators",
+      );
+      emulatorToUninstall.value = emulators.find(
+        (emulator) => emulator.gameId === game.id,
+      );
+      if (!emulatorToUninstall.value)
+        throw new Error(
+          "The installed emulator could not be found. Refresh the Emulators page and try again.",
+        );
+      emulatorUninstallOpen.value = true;
+    } catch (cause) {
+      createModal(
+        ModalType.Notification,
+        {
+          title: "Could not uninstall emulator",
+          description: String(cause),
+          buttonText: "Close",
+        },
+        (e, c) => c(),
+      );
+    }
+    return;
+  }
   if (
     steamActions.value?.beforeUninstall &&
     !(await steamActions.value.beforeUninstall())

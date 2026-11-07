@@ -8,10 +8,21 @@
             Missing required dependency "{{ game.mName }}"
           </h3>
           <div class="mt-2">
-            <p class="text-sm text-zinc-400">
+            <p v-if="version" class="text-sm text-zinc-400">
               To launch this game, you need to have "{{ game.mName }}" ({{
                 version.displayName ?? version.versionPath
-              }}) installed.
+              }}, {{ buildLabel(version) }}) installed.
+            </p>
+            <p v-else role="alert" class="text-sm text-red-400">
+              The required emulator version is not available for this build. Ask
+              your administrator to check its platform and Proton eligibility.
+            </p>
+            <p
+              v-if="version?.protonSetupRequired"
+              class="mt-2 text-sm text-amber-200"
+            >
+              Proton setup required before playing. Install umu-run and select
+              Proton in Settings → Compatibility.
             </p>
           </div>
         </div>
@@ -19,6 +30,8 @@
       <InstallDirectorySelector
         :install-dirs="installDirs"
         v-model="installDir"
+        label="Emulator location"
+        :default-index="locations.defaultIndex"
       />
 
       <div v-if="installError" class="mt-1 rounded-md bg-red-600/10 p-4">
@@ -38,7 +51,7 @@
       <LoadingButton
         @click="() => install()"
         :loading="installLoading"
-        :disabled="installLoading"
+        :disabled="installLoading || !version"
         type="submit"
         class="ml-2 w-full sm:w-fit"
       >
@@ -59,8 +72,14 @@
 <script setup lang="ts">
 import { invoke } from "@tauri-apps/api/core";
 import { XCircleIcon } from "@heroicons/vue/24/solid";
+import { buildLabel, findRequiredBuild } from "~/utils/version-options";
+import { defaultInstallIndex } from "~/utils/install-locations";
 
-const model = defineModel<{ gameId: string; versionId: string }>({
+const model = defineModel<{
+  gameId: string;
+  versionId: string;
+  platform: string;
+}>({
   required: true,
 });
 
@@ -70,14 +89,13 @@ const versionOptions = await invoke<Array<VersionOption>>(
   "fetch_game_version_options",
   {
     gameId: game.id,
-  }
+  },
 );
-const version = versionOptions.find(
-  (v) => v.versionId === model.value.versionId
-)!;
+const version = findRequiredBuild(versionOptions, model.value);
 
-const installDirs = await invoke<string[]>("fetch_download_dir_stats");
-const installDir = ref(0);
+const locations = (await fetchInstallLocations()).emulator;
+const installDirs = locations.directories;
+const installDir = ref(defaultInstallIndex(locations));
 
 function cancel() {
   // @ts-expect-error
@@ -89,11 +107,14 @@ const installLoading = ref(false);
 
 async function install() {
   try {
+    if (!version)
+      throw new Error("The required emulator build is unavailable.");
+    if (!installDirs[installDir.value]) throw new Error("Select an emulator installation location.");
     installLoading.value = true;
     await invoke("download_game", {
       gameId: game.id,
       versionId: model.value.versionId,
-      installDir: installDir.value,
+      installPath: installDirs[installDir.value],
       targetPlatform: version.platform,
       enableUpdates: false,
     });
