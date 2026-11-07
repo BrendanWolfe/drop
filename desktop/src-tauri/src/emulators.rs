@@ -40,38 +40,41 @@ pub struct MissingEmulator {
     version_name: String,
 }
 
+// Tauri requires Result for async commands with a borrowed State argument.
 #[tauri::command]
 pub async fn fetch_missing_emulators(
     game_id: String,
     state: tauri::State<'_, Mutex<AppState>>,
     app_handle: AppHandle,
-) -> Vec<MissingEmulator> {
+) -> Result<Vec<MissingEmulator>, String> {
     if let Err(error) = refresh_launch_requirements(&game_id, &state, &app_handle).await {
         log::warn!("Could not refresh emulator requirements for {game_id}: {error:?}");
     }
     let db = borrow_db_checked();
-    games::emulators::missing_emulators(&db, &game_id, Platform::HOST)
-        .into_iter()
-        .map(|dependency| {
-            let game =
-                get_cached_object_db::<Game>(&format!("game/{}", dependency.game_id), &db).ok();
-            let version = db.applications.game_versions.get(&dependency.version_id);
-            MissingEmulator {
-                name: game
-                    .map(|game| game.m_name)
-                    .unwrap_or_else(|| dependency.game_id.clone()),
-                version_name: version
-                    .map(|version| {
-                        version
-                            .display_name
-                            .clone()
-                            .unwrap_or_else(|| version.version_path.clone())
-                    })
-                    .unwrap_or_else(|| dependency.version_id.clone()),
-                dependency,
-            }
-        })
-        .collect()
+    Ok(
+        games::emulators::missing_emulators(&db, &game_id, Platform::HOST)
+            .into_iter()
+            .map(|dependency| {
+                let game =
+                    get_cached_object_db::<Game>(&format!("game/{}", dependency.game_id), &db).ok();
+                let version = db.applications.game_versions.get(&dependency.version_id);
+                MissingEmulator {
+                    name: game
+                        .map(|game| game.m_name)
+                        .unwrap_or_else(|| dependency.game_id.clone()),
+                    version_name: version
+                        .map(|version| {
+                            version
+                                .display_name
+                                .clone()
+                                .unwrap_or_else(|| version.version_path.clone())
+                        })
+                        .unwrap_or_else(|| dependency.version_id.clone()),
+                    dependency,
+                }
+            })
+            .collect(),
+    )
 }
 
 async fn refresh_launch_requirements(
