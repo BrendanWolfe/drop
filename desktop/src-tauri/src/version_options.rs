@@ -50,6 +50,15 @@ pub struct VersionDownloadOption {
     pub required_content: Vec<RequiredContent>,
 }
 
+impl VersionDownloadOption {
+    pub fn folder_version_name(&self) -> &str {
+        self.display_name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(&self.version_path)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameSize {
@@ -190,6 +199,18 @@ mod tests {
         assert_eq!(options[0].platform, Platform::Windows);
         assert_eq!(options[0].runtime, LaunchRuntime::Proton);
         assert!(options[0].proton_setup_required);
+    }
+
+    #[test]
+    fn folder_version_names_use_display_names_or_version_paths_not_ids() {
+        let mut build = option("opaque-server-id", Platform::Linux, false);
+        build.version_path = "5.0".into();
+        build.display_name = Some("Dolphin 5.0 stable".into());
+        assert_eq!(build.folder_version_name(), "Dolphin 5.0 stable");
+        build.display_name = Some("   ".into());
+        assert_eq!(build.folder_version_name(), "5.0");
+        build.display_name = None;
+        assert_eq!(build.folder_version_name(), "5.0");
     }
 
     #[test]

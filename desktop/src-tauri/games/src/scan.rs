@@ -33,7 +33,8 @@ fn scan_install_dirs_db(db: &mut Database) {
             continue;
         };
         let mut paths = files.flatten().map(|entry| entry.path()).collect::<Vec<_>>();
-        // Only descend into our own package container, never arbitrary games.
+        // New emulator builds are direct siblings of games. Keep discovering
+        // the old hidden container for recovery, without moving existing files.
         if let Ok(builds) = fs::read_dir(install_dir.join(".drop-emulators")) {
             paths.extend(builds.flatten().map(|entry| entry.path()));
         }
@@ -176,6 +177,46 @@ mod tests {
         db.applications.emulator_install_dirs = Some(vec![emulators.path().to_path_buf()]);
         scan_install_dirs_db(&mut db);
         assert_recovered(&db, emulators.path(), "emulator", "1.2.3", &configuration);
+    }
+
+    #[test]
+    fn scan_recovers_visible_side_by_side_and_legacy_emulator_builds() {
+        let root = tempfile::tempdir().unwrap();
+        let mut db = database_with_install_dir(root.path());
+        for (version, folder) in [
+            ("v1", "dolphin-5.0"),
+            ("v2", "dolphin-6.0"),
+            ("v3", ".drop-emulators/legacy-hex-build-Linux"),
+        ] {
+            let path = root.path().join(folder);
+            fs::create_dir_all(&path).unwrap();
+            let mut data = DropData::new(
+                "dolphin".into(),
+                version.into(),
+                Platform::Linux,
+                path,
+                test_configuration(),
+                None,
+            );
+            data.emulator = true;
+            data.write();
+        }
+        scan_install_dirs_db(&mut db);
+        scan_install_dirs_db(&mut db);
+        assert_eq!(db.applications.emulator_installations.len(), 3);
+        assert!(db.applications.game_statuses.is_empty());
+        for (version, folder) in [
+            ("v1", "dolphin-5.0"),
+            ("v2", "dolphin-6.0"),
+            ("v3", ".drop-emulators/legacy-hex-build-Linux"),
+        ] {
+            let installation = db.applications
+                .emulator_installation("dolphin", version, Platform::Linux)
+                .unwrap();
+            assert!(matches!(&installation.status,
+                GameDownloadStatus::Installed { install_dir, .. }
+                    if std::path::Path::new(install_dir) == root.path().join(folder)));
+        }
     }
 
     #[test]

@@ -3,7 +3,7 @@ use crate::models::data::EmulatorInstallation;
 use crate::platform::Platform;
 use crate::{DatabaseApplications, DownloadType, DownloadableMetadata, GameDownloadStatus};
 
-/// Hex encoding keeps untrusted server IDs out of filesystem path syntax.
+/// Unambiguous internal database key; not a user-facing folder name.
 pub fn build_key(id: &str, version: &str, platform: Platform) -> String {
     fn hex(value: &str) -> String {
         value

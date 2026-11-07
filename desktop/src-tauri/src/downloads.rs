@@ -86,6 +86,11 @@ pub async fn download_game(
         },
     };
 
+    let version_name = options
+        .iter()
+        .find(|option| option.version_id == meta.version && option.platform == target_platform)
+        .map(|option| option.folder_version_name().to_owned());
+
     {
         let db = borrow_db_checked();
         let status = db.applications.transient_statuses.get(&meta);
@@ -136,6 +141,7 @@ pub async fn download_game(
     let game_download_agent = GameDownloadAgent::new(
         meta.clone(),
         base_dir,
+        version_name,
         sender,
         DOWNLOAD_MANAGER.clone_depot_manager(),
         configuration,

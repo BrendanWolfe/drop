@@ -74,6 +74,7 @@ impl GameDownloadAgent {
     pub async fn new(
         metadata: DownloadableMetadata,
         base_dir: PathBuf,
+        version_name: Option<String>,
         sender: Sender<DownloadManagerSignal>,
         depot_manager: Arc<DepotManager>,
         configuration: UserConfiguration,
@@ -95,13 +96,12 @@ impl GameDownloadAgent {
                 Some(database::GameDownloadStatus::Installed { install_dir, .. }) => {
                     PathBuf::from(install_dir)
                 }
-                _ => base_dir_path.join(".drop-emulators").join(
-                    database::emulator_installations::build_key(
-                        &metadata.id,
-                        &metadata.version,
-                        metadata.target_platform,
-                    ),
-                ),
+                _ => super::install_path::create_emulator_directory(
+                    base_dir_path,
+                    &game_name,
+                    version_name.as_deref().unwrap_or("version"),
+                    &metadata,
+                )?,
             }
         } else {
             base_dir_path.join(game_name)
