@@ -2,7 +2,7 @@ import { readFileSync, appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 /** One policy for desktop releases and server images. */
-export function releaseChannel({ eventName, ref, event, version, runNumber }) {
+export function releaseChannel({ eventName, ref, event, version }) {
   const branch =
     eventName === "release"
       ? event.release?.target_commitish
@@ -27,10 +27,7 @@ export function releaseChannel({ eventName, ref, event, version, runNumber }) {
   const suppliedTag =
     eventName === "release" ? event.release.tag_name : event.inputs?.tagName;
   const tag = (
-    suppliedTag ||
-    (prerelease
-      ? `v${version}-dev.${runNumber}`
-      : `v${version}+build.${runNumber}`)
+    suppliedTag || `v${version}${prerelease ? "-dev" : ""}`
   ).replaceAll("__VERSION__", version);
   // Keep outputs single-line and prevent Docker metadata CSV/handlebars
   // injection as well as invalid/ambiguous git tag syntax.
@@ -65,7 +62,6 @@ if (
     ref: process.env.GITHUB_REF,
     event,
     version,
-    runNumber: process.env.GITHUB_RUN_NUMBER,
   });
   appendFileSync(
     process.env.GITHUB_OUTPUT,

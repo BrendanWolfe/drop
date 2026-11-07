@@ -17,13 +17,20 @@ test("develop publishes a distinct prerelease; main publishes a stable build", (
   assert.deepEqual(channel(), {
     branch: "develop",
     prerelease: true,
-    tag: "v0.4.5-dev.42",
+    tag: "v0.4.5-dev",
   });
   assert.deepEqual(channel({ ref: "refs/heads/main" }), {
     branch: "main",
     prerelease: false,
-    tag: "v0.4.5+build.42",
+    tag: "v0.4.5",
   });
+});
+
+test("desktop and server workflow numbers never change the release version", () => {
+  for (const runNumber of ["1", "42", "999"]) {
+    assert.equal(channel({ runNumber }).tag, "v0.4.5-dev");
+    assert.equal(channel({ runNumber, ref: "refs/heads/main" }).tag, "v0.4.5");
+  }
 });
 
 test("manual tags support version placeholders without changing the branch channel", () => {

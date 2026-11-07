@@ -1,9 +1,9 @@
 # Development and stable releases
 
-| Branch    | Purpose                        | Desktop releases                      | Server images                                                    |
-| --------- | ------------------------------ | ------------------------------------- | ---------------------------------------------------------------- |
-| `develop` | Integration and testing        | Prereleases; manual installation only | `develop`, `nightly`, date/build-specific tags                   |
-| `main`    | Tested, release-ready versions | Stable releases; automatic updates    | `main`, `latest`, stable version aliases and build-specific tags |
+| Branch    | Purpose                        | Desktop releases                      | Server images                                    |
+| --------- | ------------------------------ | ------------------------------------- | ------------------------------------------------ |
+| `develop` | Integration and testing        | Prereleases; manual installation only | `develop`, `nightly`, date/version-specific tags |
+| `main`    | Tested, release-ready versions | Stable releases; automatic updates    | `main`, `latest`, stable version aliases         |
 
 Both release workflows run on pushes to these branches and support manual runs.
 Server nightly schedules explicitly check out `develop`, regardless of the
@@ -14,10 +14,10 @@ branches. Development images never move `latest` or stable major/minor aliases.
 
 1. Develop and test changes on `develop`, using its prerelease installers and
    development server images.
-2. Bump application versions when appropriate and open a pull request from
-   `develop` into `main`. Require CI and review before merging. Configure branch
-   protection in GitHub to prevent unreviewed direct pushes to `main`.
-3. Merge the tested changes into `main`. The push builds stable desktop releases
+2. Bump application versions before publishing a new release, and run the checks
+   on the exact commit to be shipped.
+3. Promote the tested changes with Git directly: merge or fast-forward `develop`
+   into `main`, then push `main`. The push builds stable desktop releases
    and stable server images. Automatic desktop releases are published only after
    all platform builds succeed; failed builds leave a draft, not an update.
 
@@ -27,9 +27,11 @@ changes into `main` too; an old `main` will still contain its old workflows.
 
 ## Tags and manual releases
 
-Automatic desktop tags are `v<VERSION>-dev.<RUN_NUMBER>` on `develop` and
-`v<VERSION>+build.<RUN_NUMBER>` on `main`. Server builds use their own workflow run
-number. Docker normalizes unsupported tag characters (such as `+`) to `-`.
+Automatic desktop tags are `v<VERSION>-dev` on `develop` and `v<VERSION>` on
+`main`, for example `v0.4.8-dev` and `v0.4.8`. Desktop and server workflows use the
+same versions regardless of their workflow run numbers. No numbered build
+suffixes are added. Bump the application version before publishing another
+desktop build; published tags remain pinned to their original commits.
 Stable major/minor version aliases are generated only for main builds.
 Development image version tags are prefixed with `develop-`, even for custom
 tags, so a development build named `v0.4.6` cannot overwrite the stable image.

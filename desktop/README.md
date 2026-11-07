@@ -15,8 +15,8 @@ launch preferences, safe updates, deferred cleanup and launch limitations.
 
 This fork builds desktop installers for Windows x64 and Linux x64/ARM64 only.
 The release workflow does not build macOS, AUR, Arch Linux, or Flatpak packages.
-Pushes to `develop` publish testing prereleases (`v<VERSION>-dev.<RUN_NUMBER>`).
-Pushes to `main` publish stable releases (`v<VERSION>+build.<RUN_NUMBER>`).
+Pushes to `develop` publish testing prereleases (`v<VERSION>-dev`).
+Pushes to `main` publish stable releases (`v<VERSION>`).
 Both branches also support manual workflow runs with an optional custom tag.
 Other branches and tag-based manual runs cannot publish releases.
 
@@ -85,7 +85,7 @@ Local release packages that should receive updates must set
 `DROP_UPDATER_PUBLIC_KEY` and `DROP_RELEASE_TAG` when compiling; the public
 key is intentionally supplied at build time rather than downloaded from GitHub.
 
-New release tags can update an existing build with the same application version
-(for example, `v0.4.5+build.1` to `v0.4.5+build.2`). The installed tag is never
-offered again, and lower application versions are rejected. Releases should not
-be republished under an existing tag; publish a new tag for a new build.
+The installed tag is never offered again, and lower application versions are
+rejected. Published tags must not be reused or moved; bump the application
+version before publishing another build. Legacy numbered tags remain supported
+by the updater, but new releases use plain versions and the `-dev` suffix only.

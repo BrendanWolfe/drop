@@ -59,7 +59,7 @@ jobs:
           EXISTING_RELEASE: ${{ github.event.release.id }}
         run: |
           if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
-            test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)" || { echo "Release tag belongs to a different commit"; exit 1; }
+            test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)" || { echo "Release tag belongs to a different commit; bump the application version before publishing again"; exit 1; }
           else
             gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$(git rev-parse HEAD)"
           fi
@@ -74,7 +74,7 @@ jobs:
           import fs from 'node:fs';
           const release = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/drop-release.json`, 'utf8'));
           if (release.target_commitish !== process.env.RELEASE_BRANCH || release.prerelease !== (process.env.PRERELEASE === 'true')) throw new Error('Existing release has a different channel');
-          if (!process.env.EXISTING_RELEASE && !release.draft) throw new Error('Do not overwrite a published release; use a new tag');
+          if (!process.env.EXISTING_RELEASE && !release.draft) throw new Error('Do not overwrite a published release; bump the application version');
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_id=${release.id}\n`);
           NODE
 
@@ -144,6 +144,10 @@ jobs:
         working-directory: desktop/src-tauri
         run: cargo test --locked -p steam_shortcuts
 
+      - name: Test startup authorization safety
+        working-directory: desktop/src-tauri
+        run: cargo test --locked -p remote --lib
+
       - name: Configure signed desktop updates
         id: updater-config
         shell: bash
@@ -166,7 +170,7 @@ jobs:
         with:
           releaseId: ${{ needs.prepare.outputs.release_id }}
           tagName: ${{ env.DROP_RELEASE_TAG }}
-          releaseName: ${{ github.event.release.name || format('Desktop v__VERSION__ (build {0})', github.run_number) }}
+          releaseName: ${{ github.event.release.name || format('Desktop {0}', needs.prepare.outputs.tag) }}
           releaseBody: ${{ github.event.release.body || format('Desktop build from commit {0}. Download the installer for your platform below.', github.sha) }}
           releaseCommitish: ${{ needs.prepare.outputs.branch }}
           releaseDraft: ${{ github.event_name != 'release' }}

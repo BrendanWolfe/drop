@@ -67,14 +67,17 @@ function configureRelease(tag: string, branch = "develop") {
 }
 
 test("release bundling receives the verification key as well as signed-artifact configuration", () => {
-  const { config } = configureRelease("v0.4.5-build.42");
+  const { config } = configureRelease("v0.4.5", "main");
   assert.equal(config.bundle.createUpdaterArtifacts, true);
   assert.equal(config.plugins.updater.pubkey, "fixture-public-key");
 });
 
 test("RPM libarchive dependencies use literal names, not version expressions", () => {
   const config = JSON.parse(
-    readFileSync(new URL("../../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+    readFileSync(
+      new URL("../../src-tauri/tauri.conf.json", import.meta.url),
+      "utf8",
+    ),
   );
   // Tauri passes RPM dependencies to rpm::Dependency::any without parsing them.
   assert.deepEqual(config.bundle.linux.rpm.depends, ["libarchive"]);
@@ -83,12 +86,18 @@ test("RPM libarchive dependencies use literal names, not version expressions", (
   ]);
 });
 
-test("the embedded default tag matches the workflow build number", () => {
-  assert.equal(configureRelease("").env, "DROP_RELEASE_TAG=v0.4.5-dev.42\n");
-  assert.equal(
-    configureRelease("", "main").env,
-    "DROP_RELEASE_TAG=v0.4.5+build.42\n",
+test("embedded release tags use plain versions and only the dev suffix", () => {
+  assert.equal(configureRelease("").env, "DROP_RELEASE_TAG=v0.4.5-dev\n");
+  assert.equal(configureRelease("", "main").env, "DROP_RELEASE_TAG=v0.4.5\n");
+});
+
+test("release titles use the resolved tag without build-number decoration", () => {
+  assert.ok(
+    workflow.includes(
+      "releaseName: ${{ github.event.release.name || format('Desktop {0}', needs.prepare.outputs.tag) }}",
+    ),
   );
+  assert.ok(workflow.includes("cargo test --locked -p remote --lib"));
 });
 
 test("explicit release tags resolve the version placeholder", () => {

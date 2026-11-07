@@ -39,7 +39,7 @@ pub(super) fn should_offer_update(
     tag: &str,
     current_tag: &str,
 ) -> bool {
-    // Main can publish rebuilds without bumping the application version. Never
+    // Accept legacy same-version rebuilds and promotion from a dev tag. Never
     // offer the already installed tag or downgrade to a lower application version.
     tag != current_tag && remote >= current
 }
@@ -145,6 +145,19 @@ mod tests {
             "v0.4.5+updater.1",
             "v0.4.5+updater.1"
         ));
+    }
+
+    #[test]
+    fn plain_version_release_upgrades_legacy_and_development_tags() {
+        let stable = Version::parse("0.4.8").unwrap();
+        assert!(should_offer_update(
+            &Version::parse("0.4.7").unwrap(),
+            &stable,
+            "v0.4.8",
+            "v0.4.7+build.24"
+        ));
+        assert!(should_offer_update(&stable, &stable, "v0.4.8", "v0.4.8-dev"));
+        assert!(!should_offer_update(&stable, &stable, "v0.4.8", "v0.4.8"));
     }
 
     #[test]
