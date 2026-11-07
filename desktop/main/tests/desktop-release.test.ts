@@ -72,6 +72,17 @@ test("release bundling receives the verification key as well as signed-artifact 
   assert.equal(config.plugins.updater.pubkey, "fixture-public-key");
 });
 
+test("RPM libarchive dependencies use literal names, not version expressions", () => {
+  const config = JSON.parse(
+    readFileSync(new URL("../../src-tauri/tauri.conf.json", import.meta.url), "utf8"),
+  );
+  // Tauri passes RPM dependencies to rpm::Dependency::any without parsing them.
+  assert.deepEqual(config.bundle.linux.rpm.depends, ["libarchive"]);
+  assert.deepEqual(config.bundle.linux.deb.depends, [
+    "libarchive13 (>= 3.4) | libarchive13t64 (>= 3.4)",
+  ]);
+});
+
 test("the embedded default tag matches the workflow build number", () => {
   assert.equal(configureRelease("").env, "DROP_RELEASE_TAG=v0.4.5-dev.42\n");
   assert.equal(

@@ -64,6 +64,9 @@ the next client heartbeat.
 RAR5 requires **libarchive 3.4 or newer** (a current patched release is recommended).
 Linux builds need `pkg-config` and `libarchive-dev` alongside Tauri's GTK/WebKit
 dependencies. The deb/rpm packages declare the libarchive runtime dependency.
+The RPM dependency is unversioned because Tauri treats each entry as a literal
+dependency name rather than parsing version constraints. RPM installations still
+need libarchive 3.4 or newer for RAR5 support.
 
 For Windows/MSVC, install the static libraries through vcpkg and set these
 environment variables before building (release CI does this automatically):

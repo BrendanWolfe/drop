@@ -40,7 +40,7 @@
         "depends": ["libarchive13 (>= 3.4) | libarchive13t64 (>= 3.4)"]
       },
       "rpm": {
-        "depends": ["libarchive >= 3.4"]
+        "depends": ["libarchive"]
       }
     },
     "windows": {
