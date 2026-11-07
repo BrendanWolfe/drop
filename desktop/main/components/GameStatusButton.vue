@@ -57,8 +57,8 @@
                   'w-full px-4 py-2 text-sm inline-flex justify-between',
                 ]"
               >
-                Install
-                <ArrowDownTrayIcon class="size-5" />
+                Change version…
+                <ArrowsRightLeftIcon class="size-5" />
               </button>
             </MenuItem>
 
@@ -134,7 +134,7 @@ import {
   FolderOpenIcon,
   TrashIcon,
 } from "@heroicons/vue/24/outline";
-import { ArrowsRightLeftIcon, ArrowUpTrayIcon } from "@heroicons/vue/24/solid";
+import { ArrowsRightLeftIcon } from "@heroicons/vue/24/solid";
 
 const props = defineProps<{
   status: GameStatus;
