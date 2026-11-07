@@ -38,7 +38,15 @@ pub async fn fetch_object(
         return cache_result.try_into();
     }
 
-    let header = generate_authorization_header();
+    let header = match generate_authorization_header() {
+        Ok(header) => header,
+        Err(error) => {
+            return match cache_result {
+                Ok(cached) => cached.try_into(),
+                Err(_) => Err(CacheError::Remote(error)),
+            };
+        }
+    };
     let client = DROP_CLIENT_ASYNC.clone();
     let url = format!("{}api/v1/client/object/{object_id}", DB.fetch_base_url());
     let response = client.get(url).header("Authorization", header).send().await;

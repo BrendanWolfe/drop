@@ -104,7 +104,7 @@ async fn refresh_launch_requirements(
         .get(url)
         .header(
             "Authorization",
-            remote::auth::generate_authorization_header(),
+            remote::auth::generate_authorization_header()?,
         )
         .timeout(Duration::from_secs(4))
         .send()

@@ -276,7 +276,7 @@ impl GameDownloadAgent {
 
         let response = client
             .get(url)
-            .header("Authorization", generate_authorization_header())
+            .header("Authorization", generate_authorization_header()?)
             .send()
             .await
             .map_err(|e| ApplicationDownloadError::Communication(e.into()))?;

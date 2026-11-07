@@ -224,7 +224,7 @@ pub async fn on_game_complete(
     )?;
     let response = DROP_CLIENT_ASYNC
         .get(response)
-        .header("Authorization", generate_authorization_header())
+        .header("Authorization", generate_authorization_header()?)
         .send()
         .await?;
 

@@ -28,6 +28,7 @@ pub enum RemoteAccessError {
     InvalidEndpoint,
     ProxyAuth(proxy_auth::ProxyAuthError),
     ConnectionDenied,
+    AuthenticationRequired,
     HandshakeFailed(String),
     GameNotFound(String),
     InvalidResponse(DropServerError),
@@ -117,6 +118,9 @@ impl Display for UnredactedError<'_> {
                 f,
                 "Server access was denied (HTTP 401/403). Check reverse proxy authentication and server permissions."
             ),
+            RemoteAccessError::AuthenticationRequired => {
+                write!(f, "Sign in to Drop before accessing the server.")
+            }
             RemoteAccessError::HandshakeFailed(message) => {
                 write!(f, "failed to complete handshake: {message}")
             }

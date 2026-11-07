@@ -65,7 +65,7 @@ pub async fn download_game_chunk(
 
     let start = Instant::now();
 
-    let header = generate_authorization_header();
+    let header = generate_authorization_header()?;
 
     let url = Url::parse(depot)
         .map_err(|v| ApplicationDownloadError::DownloadError(v.into()))?

@@ -70,16 +70,17 @@ struct Claims {
     nbf: usize,
 }
 
-pub fn generate_authorization_header() -> String {
+pub fn generate_authorization_header() -> Result<String, RemoteAccessError> {
     let certs = {
         let db = borrow_db_checked();
-        db.auth.clone().expect("Authorisation not initialised")
+        db.auth.clone()
     };
 
-    sign_authorization_header(&certs)
+    authorization_header_for(certs.as_ref())
 }
 
-fn sign_authorization_header(certs: &DatabaseAuth) -> String {
+fn authorization_header_for(certs: Option<&DatabaseAuth>) -> Result<String, RemoteAccessError> {
+    let certs = certs.ok_or(RemoteAccessError::AuthenticationRequired)?;
     let system_time: usize = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::from_secs(0))
@@ -90,14 +91,19 @@ fn sign_authorization_header(certs: &DatabaseAuth) -> String {
         exp: system_time + 10,
     };
 
-    let jwt = jsonwebtoken::encode(
-        &Header::new(Algorithm::ES384),
-        &claims,
-        &EncodingKey::from_ec_pem(certs.private.as_bytes()).unwrap(),
-    )
-    .expect("failed to sign jwt");
+    let key = EncodingKey::from_ec_pem(certs.private.as_bytes()).map_err(|_| {
+        RemoteAccessError::HandshakeFailed(
+            "Stored client credentials are invalid. Sign in again.".into(),
+        )
+    })?;
+    let jwt =
+        jsonwebtoken::encode(&Header::new(Algorithm::ES384), &claims, &key).map_err(|_| {
+            RemoteAccessError::HandshakeFailed(
+                "Could not sign the client request. Sign in again.".into(),
+            )
+        })?;
 
-    format!("JWT {} {}", certs.client_id, jwt)
+    Ok(format!("JWT {} {}", certs.client_id, jwt))
 }
 
 pub async fn fetch_user() -> Result<User, RemoteAccessError> {
@@ -148,7 +154,7 @@ pub async fn ensure_web_token() -> Result<(), RemoteAccessError> {
     // Native client credentials remain valid when a separate Store token is missing or revoked.
     let response = DROP_CLIENT_ASYNC
         .post(server_url.join("/api/v1/client/user/webtoken")?)
-        .header("Authorization", sign_authorization_header(&auth))
+        .header("Authorization", authorization_header_for(Some(&auth))?)
         .timeout(Duration::from_secs(15))
         .send()
         .await?;
@@ -212,7 +218,9 @@ pub fn auth_initiate_logic(mode: String) -> Result<String, RemoteAccessError> {
         mode,
     };
 
-    let response = blocking_request(http::Method::POST, endpoint)?.json(&body).send()?;
+    let response = blocking_request(http::Method::POST, endpoint)?
+        .json(&body)
+        .send()?;
 
     if response.status() != 200 {
         let data: DropServerError = response.json()?;
@@ -252,7 +260,48 @@ pub async fn setup() -> (AppStatus, Option<User>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_web_token, web_token_is_valid};
+    use super::{authorization_header_for, parse_web_token, web_token_is_valid};
+    use crate::error::RemoteAccessError;
+    use database::DatabaseAuth;
+
+    #[test]
+    fn missing_credentials_return_sign_in_error_without_panicking() {
+        assert!(matches!(
+            authorization_header_for(None),
+            Err(RemoteAccessError::AuthenticationRequired)
+        ));
+    }
+
+    #[test]
+    fn invalid_credentials_return_an_error_without_exposing_the_private_key() {
+        let auth = DatabaseAuth::new(
+            "invalid-private-key-secret".into(),
+            "certificate".into(),
+            "client".into(),
+            None,
+        );
+        let error = authorization_header_for(Some(&auth)).unwrap_err();
+        assert!(matches!(error, RemoteAccessError::HandshakeFailed(_)));
+        assert!(!error.to_string().contains("invalid-private-key-secret"));
+    }
+
+    #[test]
+    fn valid_credentials_still_generate_es384_client_authorization() {
+        // Generated test-only key. Never used for an actual Drop client.
+        let private = "-----BEGIN PRIVATE KEY-----\n\
+MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDCVOV2V7YJyrOPI6uN1\n\
+4y+IMu2s9W1QZGSHxZNuzqlH9YidfrwhEwlrb5xdCEN+3aihZANiAATFD+xMD1mE\n\
+qhJ1spW89xBvkHP2CY/9TNF/ZyKffmDO7lYFNaTr8sBNO97ZzgL2a9yS+Jh5gPlA\n\
+byv4QlBFCEtVM9HZJ7LrvXmkvWbtg2Og/2+eU7k1RN7o1w2rUNHaemA=\n\
+-----END PRIVATE KEY-----";
+        let auth = DatabaseAuth::new(private.into(), "certificate".into(), "client".into(), None);
+        let header = authorization_header_for(Some(&auth)).unwrap();
+        let token = header.strip_prefix("JWT client ").unwrap();
+        assert_eq!(
+            jsonwebtoken::decode_header(token).unwrap().alg,
+            jsonwebtoken::Algorithm::ES384
+        );
+    }
 
     #[test]
     fn accepts_web_token_with_authenticated_user() {

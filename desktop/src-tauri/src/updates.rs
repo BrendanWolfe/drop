@@ -1,7 +1,7 @@
 use std::sync::nonpoison::Mutex;
 
 use async_trait::async_trait;
-use client::{app_state::AppState, app_status::AppStatus};
+use client::app_state::AppState;
 use database::{
     GameDownloadStatus, GameVersion, borrow_db_checked, borrow_db_mut_checked,
 };
@@ -14,6 +14,8 @@ use crate::{
     scheduler::ScheduleTask,
     version_options::has_update,
 };
+
+mod policy;
 
 pub struct GameUpdater {
     no_internet: bool,
@@ -42,21 +44,15 @@ impl ScheduleTask for GameUpdater {
             .as_ref()
             .ok_or(anyhow::anyhow!("game update task ran before setup"))?;
         let state = app_handle.state::<Mutex<AppState>>();
-        {
-            let state_lock = state.lock();
-            if state_lock.status == AppStatus::Offline {
-                self.no_internet = true;
-                return Ok(());
-            };
-        };
-
-        self.no_internet = false;
+        let status = state.lock().status;
 
         let to_check: Vec<(GameVersion, database::platform::Platform)> = {
             let db_lock = borrow_db_checked();
-
-            
-
+            if !policy::can_check_game_updates(status, &db_lock) {
+                self.no_internet = true;
+                return Ok(());
+            }
+            self.no_internet = false;
             db_lock
                 .applications
                 .game_statuses

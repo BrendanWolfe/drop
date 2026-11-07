@@ -1,5 +1,4 @@
-use database::{DB};
-use reqwest_middleware::Error;
+use database::DB;
 use url::Url;
 
 use crate::{
@@ -21,19 +20,24 @@ pub fn generate_url(
     Ok(base_url)
 }
 
-pub async fn make_authenticated_get(url: Url) -> Result<reqwest::Response, Error> {
-    DROP_CLIENT_ASYNC
+pub async fn make_authenticated_get(url: Url) -> Result<reqwest::Response, RemoteAccessError> {
+    let header = generate_authorization_header()?;
+    Ok(DROP_CLIENT_ASYNC
         .get(url)
-        .header("Authorization", generate_authorization_header())
+        .header("Authorization", header)
         .send()
-        .await
+        .await?)
 }
 
-pub async fn make_authenticated_post<T: serde::Serialize>(url: Url, body: &T) -> Result<reqwest::Response, Error> {
-    DROP_CLIENT_ASYNC
+pub async fn make_authenticated_post<T: serde::Serialize>(
+    url: Url,
+    body: &T,
+) -> Result<reqwest::Response, RemoteAccessError> {
+    let header = generate_authorization_header()?;
+    Ok(DROP_CLIENT_ASYNC
         .post(url)
-        .header("Authorization", generate_authorization_header())
+        .header("Authorization", header)
         .json(body)
         .send()
-        .await
+        .await?)
 }

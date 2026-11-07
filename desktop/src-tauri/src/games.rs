@@ -76,7 +76,7 @@ pub async fn fetch_library_logic(
     }
 
     let response = generate_url(&["/api/v1/client/user/library"], &[])?;
-    let auth_header = generate_authorization_header();
+    let auth_header = generate_authorization_header()?;
     let response = DROP_CLIENT_ASYNC
         .get(response)
         .header("Authorization", auth_header)
@@ -225,7 +225,7 @@ pub async fn fetch_game_logic(
             let response = generate_url(&["/api/v1/client/game", &id], &[])?;
             let response = client
                 .get(response)
-                .header("Authorization", generate_authorization_header())
+                .header("Authorization", generate_authorization_header()?)
                 .send()
                 .await?;
 
@@ -288,7 +288,7 @@ pub async fn fetch_game_version_options_logic(
     )?;
     let response = client
         .get(response)
-        .header("Authorization", generate_authorization_header())
+        .header("Authorization", generate_authorization_header()?)
         .send()
         .await?;
 

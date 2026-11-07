@@ -156,9 +156,12 @@ pub fn start(app: &AppHandle) {
             let Ok(endpoint) = generate_url(&["/api/v1/client/downloads"], &[]) else {
                 continue;
             };
+            let Ok(header) = generate_authorization_header() else {
+                continue;
+            };
             let result = client
                 .post(endpoint)
-                .header("Authorization", generate_authorization_header())
+                .header("Authorization", header)
                 .timeout(Duration::from_secs(4))
                 .json(&Report {
                     reporter_id: reporter_id.clone(),
