@@ -40,6 +40,13 @@
     <p v-if="error" role="alert" class="text-sm whitespace-normal text-red-300">
       {{ error }}
     </p>
+    <!-- Keep the picker in this dialog's context so it isn't an outside click. -->
+    <ModalSelectLaunch
+      v-if="activeLaunch"
+      v-model="selectorOpen"
+      :filter-platform="activeLaunch.platform"
+      @select="selectEmulator"
+    />
     <template #buttons>
       <LoadingButton
         :loading="saving"
@@ -57,12 +64,6 @@
       </button>
     </template>
   </ModalTemplate>
-  <ModalSelectLaunch
-    v-if="activeLaunch"
-    v-model="selectorOpen"
-    :filter-platform="activeLaunch.platform"
-    @select="selectEmulator"
-  />
 </template>
 
 <script setup lang="ts">
