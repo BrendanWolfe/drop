@@ -74,19 +74,35 @@ silently change. Launch verifies the installed version/platform and requests the
 required dependency if missing or different. Close the emulator to stop tracking
 the game's play session. Prefer non-single-instance/non-detaching launch modes.
 
-The current library supports one active installation per emulator. Games pinned
-to different versions may request an emulator version switch; simultaneous
-side-by-side installations of the same emulator are not yet supported. Existing
-legacy `{rom}` emulator commands continue working without a profile.
+Emulator builds install side by side, keyed by emulator, version and platform.
+Each game uses its exact required build; there is no global active version to
+switch. Complete installed builds are reused, so only missing dependencies are
+downloaded. Existing legacy `{rom}` commands continue working without a profile.
+
+Choose separate game and emulator install locations/defaults in **Settings →
+Downloads**. New emulator folders are directly inside the selected location,
+with lowercase, hyphenated names such as `dolphin-5.0`. Name collisions receive
+numeric suffixes. Existing installs remain in place, including older hidden
+folders, and can still be resumed and uninstalled.
+
+The **Emulators** library shows each installed version and the games that rely on
+it. Removing a build requires confirmation; affected games offer **Update** to
+restore only their missing emulator dependencies before playing. Admins can edit
+a game version's emulator requirements without re-importing its game files.
 
 Apply the server database migration before running the updated server, and ship
 the updated desktop client to use UI-first profiles and generated templates.
 
-## Testing development builds
+## Releases and development builds
+
+Stable desktop installers are available from the repository's latest stable
+release. Pair them with `ghcr.io/brendanwolfe/drop:latest` for the stable server.
+Back up your server database before upgrading; startup applies migrations
+automatically. Desktop client update settings show the installed version,
+manual update check, automatic-update preference and update timestamps.
 
 Install the desktop prerelease manually; development releases intentionally have
 no automatic-update manifest. Run the matching development server image
 `ghcr.io/brendanwolfe/drop:develop` to access the emulator admin section and profile
-fields. Back up your database before updating a test server. The server startup
-applies the new emulator migration automatically. Stable `main` installations do
-not receive this development build automatically.
+fields. Stable `main` installations do not receive development builds
+automatically.
