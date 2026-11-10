@@ -3,7 +3,13 @@ import { type } from "arktype";
 export const EmulatorProfile = type({
   mode: "'cli' | 'ui'",
   configFiles: type({ path: "string", content: "string" }).array(),
+  "directOpenCommand?": "string",
 });
+
+export function validateDirectOpenCommand(command: string): string | undefined {
+  if (/\{(?:rom|gameDir|configDir)(?::json)?\}/.test(command))
+    return "Direct-open commands cannot use game or per-game configuration placeholders.";
+}
 
 // Apply the same cross-platform path rules on the server and desktop. Templates
 // may only create files inside Drop's isolated configuration directory.
@@ -22,6 +28,10 @@ export function validateEmulatorProfile(
   profile: typeof EmulatorProfile.infer,
   command: string,
 ): string | undefined {
+  const directOpenError = validateDirectOpenCommand(
+    profile.directOpenCommand ?? "",
+  );
+  if (directOpenError) return directOpenError;
   if (profile.mode === "cli" && !command.includes("{rom}"))
     return "CLI emulator commands must contain {rom}.";
   if (profile.mode === "ui" && command.includes("{rom}"))

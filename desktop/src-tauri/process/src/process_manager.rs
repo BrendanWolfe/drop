@@ -495,6 +495,9 @@ impl ProcessManager<'_> {
             );
 
             let (emulator_metadata, _) = games::emulators::installed_emulator(&db_lock, &emulator.game_id, &emulator.version_id, target_platform).ok_or(err.clone())?;
+            if matches!(db_lock.applications.transient_statuses.get(emulator_metadata), Some(ApplicationTransientStatus::Running { .. })) {
+                return Err(ProcessError::AlreadyRunning);
+            }
             let emulator_install_dir = games::emulators::emulator_install_path(
                 &db_lock, &emulator.game_id, &emulator.version_id, target_platform,
                 std::slice::from_ref(&emulator.launch_id), Platform::HOST,
@@ -613,6 +616,115 @@ impl ProcessManager<'_> {
             PROCESS_MANAGER
                 .lock()
                 .on_process_finish(wait_thread_game_id.id, result)
+        });
+        Ok(())
+    }
+
+    /// Launch one exact emulator build without a game or playtime reporting.
+    pub fn launch_emulator(
+        &mut self,
+        game_id: &str,
+        version_id: &str,
+        platform: Platform,
+        launch_id: &str,
+    ) -> Result<(), ProcessError> {
+        let mut db = borrow_db_mut_checked();
+        let installation = db
+            .applications
+            .emulator_installation(game_id, version_id, platform)
+            .ok_or(ProcessError::NotInstalled)?;
+        let meta = installation.metadata.clone();
+        if games::emulators::emulator_in_use(&db, &meta) {
+            return Err(ProcessError::AlreadyRunning);
+        }
+        let install_dir = games::emulators::emulator_install_path(
+            &db,
+            game_id,
+            version_id,
+            platform,
+            &[launch_id.into()],
+            self.current_platform,
+        )
+        .ok_or(ProcessError::NotInstalled)?;
+        let version = db
+            .applications
+            .game_versions
+            .get(version_id)
+            .ok_or(ProcessError::InvalidVersion)?;
+        let launch =
+            games::emulators::direct_open_launches(version, platform, self.current_platform)
+                .find(|launch| launch.launch_id == launch_id)
+                .ok_or_else(|| {
+                    ProcessError::InvalidArguments(
+                        "No direct-open command is configured for this emulator launch.".into(),
+                    )
+                })?;
+        let parsed = crate::emulator::prepare_direct_open(
+            launch
+                .emulator_profile
+                .as_ref()
+                .unwrap()
+                .direct_open_command
+                .as_deref()
+                .unwrap(),
+            Path::new(&install_dir),
+        )?;
+        let handler = self.fetch_process_handler(
+            &db,
+            &platform,
+            version.user_configuration.override_handler.as_deref(),
+        )?;
+        let target = handler.create_launch_process(
+            &meta,
+            parsed.reconstruct(),
+            version,
+            &install_dir,
+            &db,
+        )?;
+        let resolved = crate::resolution::finish_command(
+            target,
+            &install_dir,
+            version,
+            Some(Path::new(&install_dir)),
+        )?;
+        resolved.command.ensure_executable()?;
+        let mut command = Command::new(resolved.command.command);
+        command
+            .args(resolved.command.args)
+            .current_dir(resolved.working_directory)
+            .env_remove("RUST_LOG");
+        for env in resolved.command.env {
+            if let Some((key, value)) = env.split_once('=') {
+                command.env(key, value);
+            }
+        }
+        let log_dir = self.get_log_dir(meta.id.clone());
+        create_dir_all(&log_dir)?;
+        let log = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_dir.join(format!(
+                "{}-direct-open.log",
+                database::emulator_installations::build_key(&meta.id, &meta.version, platform)
+            )))?;
+        command.stdout(log.try_clone()?).stderr(log);
+        handler.modify_command(&mut command);
+        let mut child = command.spawn()?;
+        db.applications
+            .transient_statuses
+            .insert(meta.clone(), ApplicationTransientStatus::Running {});
+        utils::app_emit!(&self.app_handle, "update_library", ());
+        let app = self.app_handle.clone();
+        spawn(move || {
+            let result = child.wait();
+            if let Err(error) = result {
+                warn!("Could not wait for emulator GUI: {error}");
+            }
+            borrow_db_mut_checked()
+                .applications
+                .transient_statuses
+                .remove(&meta);
+            utils::app_emit!(&app, "update_library", ());
         });
         Ok(())
     }

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import type { InstalledType, InstalledEmulator } from "../types.ts";
 import {
   emulatorLibrary,
+  emulatorCanOpen,
   emulatorSelection,
   emulatorVersionStatus,
   filterEmulatorLibrary,
@@ -139,4 +140,34 @@ test("version actions stay inline rather than detouring to an emulator game page
   assert.match(page, /@click="openFolder\(version\)"/);
   assert.match(page, /@click="requestUninstall\(version\)"/);
   assert.match(page, /:disabled="version\.busy"/);
+  assert.match(page, /invoke\("open_emulator"/);
+  assert.match(page, /version\.directOpenLaunches\?\.length === 1/);
+});
+
+test("direct-open is available only for configured, complete, idle emulator versions", () => {
+  const version = installed({
+    directOpenLaunches: [{ launchId: "gui", name: "GUI" }],
+  });
+  assert.equal(emulatorCanOpen(version), true);
+  assert.equal(emulatorCanOpen(installed()), false);
+  assert.equal(emulatorCanOpen({ ...version, directOpenLaunches: [] }), false);
+  assert.equal(emulatorCanOpen({ ...version, busy: true }), false);
+  assert.equal(emulatorCanOpen(version, true), false);
+  for (const type of [
+    "PartiallyInstalled",
+    "SetupRequired",
+  ] as InstalledType[]) {
+    assert.equal(emulatorCanOpen({ ...version, installType: { type } }), false);
+  }
+  const other = installed({ versionId: "v2", directOpenLaunches: [] });
+  const versions = emulatorLibrary([version, other])[0]!.versions;
+  assert.equal(
+    versions.find((v) => v.versionId === version.versionId)!
+      .directOpenLaunches![0]!.launchId,
+    "gui",
+  );
+  assert.deepEqual(
+    versions.find((v) => v.versionId === "v2")!.directOpenLaunches,
+    [],
+  );
 });

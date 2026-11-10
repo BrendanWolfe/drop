@@ -128,7 +128,9 @@
                         :key="config.launchId"
                         :config="config"
                         :game-id="game.id"
+                        :is-emulator="game.type === 'Emulator'"
                         @compatibility="config.protonCompatible = $event"
+                        @direct-open="config.emulatorProfile = $event"
                       />
                     </ul>
                   </td>

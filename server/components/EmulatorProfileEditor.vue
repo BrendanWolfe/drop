@@ -14,6 +14,7 @@
       {{ $t("emulators.profileHelp") }}
     </p>
     <code class="block break-words text-xs text-blue-300" v-text="tokens" />
+    <EmulatorDirectOpenCommand v-model="profile.directOpenCommand" />
     <h3 class="text-sm font-medium text-zinc-100">
       {{ $t("emulators.configFiles") }}
     </h3>

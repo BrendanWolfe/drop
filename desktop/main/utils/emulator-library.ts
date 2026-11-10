@@ -69,3 +69,12 @@ export function emulatorVersionStatus(version: InstalledEmulator) {
   if (version.installType.type === "SetupRequired") return "Setup required";
   return "Installed";
 }
+
+export function emulatorCanOpen(version: InstalledEmulator, opening = false) {
+  return (
+    (version.directOpenLaunches?.length ?? 0) > 0 &&
+    version.installType.type === "Installed" &&
+    !version.busy &&
+    !opening
+  );
+}

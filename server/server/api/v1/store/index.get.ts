@@ -6,6 +6,10 @@ import prisma from "~/server/internal/db/database";
 import gameSizeManager from "~/server/internal/gamesize";
 import { parsePlatform } from "~/server/internal/utils/parseplatform";
 import { getAgeRestrictionFilter } from "~/server/internal/utils/ageRestrictions";
+import {
+  emulationFilterSchema,
+  getEmulationFilter,
+} from "~/server/internal/store/filters";
 
 const StoreRead = type({
   skip: type("string")
@@ -17,6 +21,7 @@ const StoreRead = type({
 
   tags: "string?",
   platform: "string?",
+  emulated: emulationFilterSchema.optional(),
 
   company: "string?",
   companyActions: "string = 'published,developed'",
@@ -126,6 +131,7 @@ export default defineEventHandler(async (h3) => {
     ...platformFilter,
     ...companyFilter,
     ...ageFilter,
+    ...getEmulationFilter(options.emulated),
     type: GameType.Game,
   };
 

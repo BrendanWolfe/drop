@@ -1,5 +1,6 @@
-//! Portable emulators receive literal argv values and private, first-run config
-//! files. Never write to the emulator package or the user's home directory.
+//! Game launches receive literal argv values and private, first-run config files.
+//! Template generation never writes to the emulator package or the user's home.
+//! Direct-open commands use the emulator's normal config, with no game templates.
 use crate::{ParsedCommand, error::ProcessError};
 use database::models::data::{EmulatorLaunchMode, LaunchConfiguration};
 use std::{
@@ -77,6 +78,44 @@ fn expand(input: &str, values: &[(&str, String)], json: bool) -> String {
     }
     output.push_str(rest);
     output
+}
+
+/// Standalone commands have no ROM, game directory or per-game config context.
+pub fn prepare_direct_open(
+    command: &str,
+    emulator_dir: &Path,
+) -> Result<ParsedCommand, ProcessError> {
+    if [
+        "{rom}",
+        "{gameDir}",
+        "{configDir}",
+        "{rom:json}",
+        "{gameDir:json}",
+        "{configDir:json}",
+    ]
+    .iter()
+    .any(|token| command.contains(token))
+    {
+        return Err(invalid(
+            "Direct-open commands cannot use game or per-game configuration placeholders.",
+        ));
+    }
+    let emulator_dir = dunce::canonicalize(emulator_dir)?;
+    let values = [("emulatorDir", emulator_dir.to_string_lossy().into_owned())];
+    let mut parsed = ParsedCommand::parse(command.into())?;
+    parsed.command = expand(&parsed.command, &values, false);
+    parsed.make_absolute(emulator_dir);
+    parsed.args = parsed
+        .args
+        .iter()
+        .map(|arg| expand(arg, &values, false))
+        .collect();
+    parsed.env = parsed
+        .env
+        .iter()
+        .map(|env| expand(env, &values, false))
+        .collect();
+    Ok(parsed)
 }
 
 pub fn prepare(
@@ -194,7 +233,49 @@ mod tests {
             emulator_profile: Some(EmulatorProfile {
                 mode,
                 config_files: vec![],
+                direct_open_command: None,
             }),
+        }
+    }
+
+    #[test]
+    fn direct_open_is_game_free_and_preserves_literal_paths_and_environment() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("Player's {gameDir} emulator");
+        fs::create_dir(&dir).unwrap();
+        let command = prepare_direct_open(
+            "DATA='{emulatorDir}' 'emulator gui' --data '{emulatorDir}/settings' --gui",
+            &dir,
+        )
+        .unwrap();
+        assert_eq!(command.command, dir.join("emulator gui").to_string_lossy());
+        assert_eq!(
+            command.args,
+            ["--data", &format!("{}/settings", dir.display()), "--gui"]
+        );
+        assert_eq!(command.env, [format!("DATA={}", dir.display())]);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        let roundtrip = ParsedCommand::parse(command.reconstruct()).unwrap();
+        assert_eq!(roundtrip.args[1], format!("{}/settings", dir.display()));
+    }
+
+    #[test]
+    fn direct_open_rejects_empty_commands_and_game_placeholders() {
+        let dir = tempfile::tempdir().unwrap();
+        for command in [
+            "",
+            "  ",
+            "emulator '{rom}'",
+            "emulator '{gameDir}'",
+            "emulator '{configDir}'",
+            "emulator '{gameDir:json}'",
+            "emulator '{configDir:json}'",
+            "emulator '{rom:json}'",
+        ] {
+            assert!(
+                prepare_direct_open(command, dir.path()).is_err(),
+                "{command}"
+            );
         }
     }
 

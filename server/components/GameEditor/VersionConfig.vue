@@ -60,14 +60,35 @@
         platform: props.config.emulator.platform,
       }"
     />
+    <div
+      v-if="isEmulator && !isSetup(config)"
+      class="space-y-3 border-t border-zinc-700 pt-3"
+    >
+      <EmulatorDirectOpenCommand
+        v-model="directOpenCommand"
+        :disabled="savingDirectOpen"
+      />
+      <LoadingButton :loading="savingDirectOpen" @click="saveDirectOpen">
+        {{ $t("common.save") }}
+      </LoadingButton>
+      <p
+        v-if="directOpenError"
+        role="alert"
+        class="text-sm whitespace-normal text-red-400"
+      >
+        {{ directOpenError }}
+      </p>
+    </div>
   </li>
 </template>
 
 <script setup lang="ts">
 import type { AdminFetchGameType } from "~/server/api/v1/admin/game/[id]/index.get";
+import type { EmulatorProfile } from "~/server/internal/library/emulator-profile";
 
 const props = defineProps<{
   gameId: string;
+  isEmulator?: boolean;
   config:
     | AdminFetchGameType["versions"][number]["setups"][number]
     | AdminFetchGameType["versions"][number]["launches"][number];
@@ -83,6 +104,46 @@ watch(
 );
 const saveError = ref<string>();
 const { t } = useI18n();
+const directOpenCommand = ref<string>();
+const savingDirectOpen = ref(false);
+const directOpenError = ref<string>();
+watch(
+  () => (!isSetup(props.config) ? props.config.emulatorProfile : undefined),
+  (profile) => {
+    directOpenCommand.value =
+      profile &&
+      typeof profile === "object" &&
+      "directOpenCommand" in profile &&
+      typeof profile.directOpenCommand === "string"
+        ? profile.directOpenCommand
+        : undefined;
+  },
+  { immediate: true, deep: true },
+);
+
+async function saveDirectOpen() {
+  if (isSetup(props.config) || savingDirectOpen.value) return;
+  savingDirectOpen.value = true;
+  directOpenError.value = undefined;
+  try {
+    const profile = await $dropFetch(
+      "/api/v1/admin/game/:id/versions/:versionid/direct-open",
+      {
+        method: "PATCH",
+        params: { id: props.gameId, versionid: props.config.versionId },
+        body: {
+          launchId: props.config.launchId,
+          command: directOpenCommand.value ?? "",
+        },
+      },
+    );
+    emit("directOpen", profile);
+  } catch {
+    directOpenError.value = t("emulators.directOpenSaveError");
+  } finally {
+    savingDirectOpen.value = false;
+  }
+}
 
 async function saveCompatibility(event: Event) {
   const input = event.target as HTMLInputElement;
@@ -113,7 +174,10 @@ async function saveCompatibility(event: Event) {
   }
 }
 
-const emit = defineEmits<{ compatibility: [value: boolean] }>();
+const emit = defineEmits<{
+  compatibility: [value: boolean];
+  directOpen: [profile: typeof EmulatorProfile.infer];
+}>();
 
 function isSetup(
   v: typeof props.config,

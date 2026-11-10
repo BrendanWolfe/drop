@@ -31,7 +31,15 @@ pub struct InstalledEmulator {
     install_dir: String,
     install_type: InstalledGameType,
     busy: bool,
+    direct_open_launches: Vec<DirectOpenLaunch>,
     required_by: Vec<EmulatorDependent>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectOpenLaunch {
+    launch_id: String,
+    name: String,
 }
 
 #[derive(Serialize)]
@@ -96,25 +104,7 @@ async fn refresh_launch_requirements(
         db.applications.installed_game_version.get(game_id).cloned()
     };
     let Some(meta) = meta else { return Ok(()) };
-    let url = remote::requests::generate_url(
-        &["/api/v1/client/game", game_id, "version", &meta.version],
-        &[],
-    )?;
-    let response = remote::utils::DROP_CLIENT_ASYNC
-        .get(url)
-        .header(
-            "Authorization",
-            remote::auth::generate_authorization_header()?,
-        )
-        .timeout(Duration::from_secs(4))
-        .send()
-        .await?;
-    if !response.status().is_success() {
-        return Err(remote::error::RemoteAccessError::InvalidResponse(
-            response.json().await?,
-        ));
-    }
-    let version: GameVersion = response.json().await?;
+    let version = fetch_remote_version(game_id, &meta.version).await?;
     let mut db = borrow_db_mut_checked();
     if games::emulators::refresh_installed_launches(
         &mut db,
@@ -133,10 +123,80 @@ async fn refresh_launch_requirements(
     Ok(())
 }
 
+async fn fetch_remote_version(
+    game_id: &str,
+    version_id: &str,
+) -> Result<GameVersion, remote::error::RemoteAccessError> {
+    let url = remote::requests::generate_url(
+        &["/api/v1/client/game", game_id, "version", version_id],
+        &[],
+    )?;
+    let response = remote::utils::DROP_CLIENT_ASYNC
+        .get(url)
+        .header(
+            "Authorization",
+            remote::auth::generate_authorization_header()?,
+        )
+        .timeout(Duration::from_secs(4))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(remote::error::RemoteAccessError::InvalidResponse(
+            response.json().await?,
+        ));
+    }
+    Ok(response.json().await?)
+}
+
 /// The installation database is authoritative, so this also works offline and
 /// includes emulators that are no longer in the user's server library.
 #[tauri::command]
-pub fn fetch_installed_emulators() -> Vec<InstalledEmulator> {
+pub async fn fetch_installed_emulators(
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Vec<InstalledEmulator>, String> {
+    // Refresh commands for existing installs, but keep cached commands offline.
+    let signed_in = state.lock().status == ::client::app_status::AppStatus::SignedIn;
+    let refresh = {
+        let db = borrow_db_checked();
+        if signed_in && !db.settings.force_offline {
+            db.applications
+                .emulator_installations
+                .values()
+                .filter(|install| !games::emulators::emulator_in_use(&db, &install.metadata))
+                .map(|install| install.metadata.clone())
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        }
+    };
+    // An unreachable server should cost one timeout, not one per installed build.
+    let requests = refresh
+        .into_iter()
+        .map(|meta| {
+            tauri::async_runtime::spawn(async move {
+                match fetch_remote_version(&meta.id, &meta.version).await {
+                    Ok(version) => {
+                        games::emulators::refresh_installed_launches(
+                            &mut borrow_db_mut_checked(),
+                            &meta.id,
+                            &meta.version,
+                            meta.target_platform,
+                            version,
+                        );
+                    }
+                    Err(error) => log::warn!(
+                        "Could not refresh emulator commands for {}: {error:?}",
+                        meta.id
+                    ),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    for request in requests {
+        if let Err(error) = request.await {
+            log::warn!("Could not refresh emulator commands: {error}");
+        }
+    }
     let db = borrow_db_checked();
     let mut emulators = Vec::new();
     for installation in db.applications.emulator_installations.values() {
@@ -198,11 +258,38 @@ pub fn fetch_installed_emulators() -> Vec<InstalledEmulator> {
             install_dir: install_dir.clone(),
             install_type: install_type.clone(),
             busy: games::emulators::emulator_in_use(&db, meta),
+            direct_open_launches: version
+                .into_iter()
+                .flat_map(|version| {
+                    games::emulators::direct_open_launches(
+                        version,
+                        meta.target_platform,
+                        Platform::HOST,
+                    )
+                })
+                .map(|launch| DirectOpenLaunch {
+                    launch_id: launch.launch_id.clone(),
+                    name: launch.name.clone(),
+                })
+                .collect(),
             required_by: dependents,
         });
     }
     emulators.sort_by(|a, b| a.name.cmp(&b.name));
-    emulators
+    Ok(emulators)
+}
+
+#[tauri::command]
+pub fn open_emulator(
+    game_id: String,
+    version_id: String,
+    target_platform: Platform,
+    launch_id: String,
+) -> Result<(), String> {
+    process::PROCESS_MANAGER
+        .lock()
+        .launch_emulator(&game_id, &version_id, target_platform, &launch_id)
+        .map_err(|error| error.to_string())
 }
 
 /// Reserve and remove precisely one build; failures retain its database record.

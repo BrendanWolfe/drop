@@ -272,6 +272,7 @@ pub fn run() {
             fetch_library,
             fetch_game,
             emulators::fetch_installed_emulators,
+            emulators::open_emulator,
             emulators::uninstall_emulator,
             emulators::fetch_missing_emulators,
             add_download_dir,

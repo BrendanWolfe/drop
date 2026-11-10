@@ -73,6 +73,7 @@ export type InstalledEmulator = {
   installDir: string;
   installType: { type: InstalledType };
   busy: boolean;
+  directOpenLaunches?: Array<{ launchId: string; name: string }>;
   requiredBy: Array<{ gameId: string; name: string; versionName: string }>;
 };
 

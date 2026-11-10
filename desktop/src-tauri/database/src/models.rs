@@ -173,6 +173,8 @@ pub mod data {
         pub struct EmulatorProfile {
             pub mode: EmulatorLaunchMode,
             pub config_files: Vec<EmulatorConfigFile>,
+            #[serde(default)]
+            pub direct_open_command: Option<String>,
         }
 
         #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -489,9 +491,13 @@ pub mod data {
             )
             .unwrap();
             assert!(launch.emulator_profile.is_none());
+            let profile: super::EmulatorProfile =
+                ron::from_str("(mode:cli,configFiles:[])").unwrap();
+            assert!(profile.direct_open_command.is_none());
             let mut launch = launch;
             launch.emulator_profile = Some(super::EmulatorProfile {
                 mode: super::EmulatorLaunchMode::Ui,
+                direct_open_command: Some("emulator --gui".into()),
                 config_files: vec![super::EmulatorConfigFile {
                     path: "settings.json".into(),
                     content: "{gameDir:json}".into(),

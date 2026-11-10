@@ -232,6 +232,61 @@
                     <ArrowDownTrayIcon class="size-4" aria-hidden="true" />
                   </button>
                   <button
+                    v-if="version.directOpenLaunches?.length === 1"
+                    type="button"
+                    class="emulator-button size-10 !px-0"
+                    :disabled="!canOpenEmulator(version)"
+                    :aria-label="`Open ${activeEmulator.name} ${version.versionName} without a game`"
+                    title="Open emulator"
+                    @click="
+                      openEmulator(
+                        version,
+                        version.directOpenLaunches[0]!.launchId,
+                      )
+                    "
+                  >
+                    <ArrowTopRightOnSquareIcon
+                      class="size-4"
+                      aria-hidden="true"
+                    />
+                  </button>
+                  <Menu
+                    v-else-if="(version.directOpenLaunches?.length ?? 0) > 1"
+                    as="div"
+                    class="relative"
+                  >
+                    <MenuButton
+                      class="emulator-button size-10 !px-0"
+                      :disabled="!canOpenEmulator(version)"
+                      :aria-label="`Open ${activeEmulator.name} ${version.versionName} without a game`"
+                      title="Open emulator"
+                    >
+                      <ArrowTopRightOnSquareIcon
+                        class="size-4"
+                        aria-hidden="true"
+                      />
+                    </MenuButton>
+                    <MenuItems
+                      class="absolute right-0 z-10 mt-2 min-w-48 rounded-lg bg-zinc-800 p-1 shadow-xl ring-1 ring-white/10 focus:outline-none"
+                    >
+                      <MenuItem
+                        v-for="launch in version.directOpenLaunches"
+                        :key="launch.launchId"
+                        v-slot="{ active }"
+                      >
+                        <button
+                          type="button"
+                          class="min-h-10 w-full rounded-md px-3 py-2 text-left text-sm"
+                          :class="{ 'bg-zinc-700': active }"
+                          :disabled="!canOpenEmulator(version)"
+                          @click="openEmulator(version, launch.launchId)"
+                        >
+                          {{ launch.name }}
+                        </button>
+                      </MenuItem>
+                    </MenuItems>
+                  </Menu>
+                  <button
                     type="button"
                     class="emulator-button size-10 !px-0"
                     :aria-label="`Open folder for ${version.versionName}`"
@@ -352,17 +407,20 @@
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
+  ArrowTopRightOnSquareIcon,
   ChevronRightIcon,
   CpuChipIcon,
   FolderOpenIcon,
   MagnifyingGlassIcon,
   TrashIcon,
 } from "@heroicons/vue/20/solid";
+import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { InstalledEmulator } from "~/types";
 import {
   emulatorLibrary,
+  emulatorCanOpen,
   emulatorSelection,
   emulatorVersionStatus,
   filterEmulatorLibrary,
@@ -377,6 +435,7 @@ const selectedGameId = ref<string>();
 const uninstallTarget = ref<InstalledEmulator>();
 const confirmOpen = ref(false);
 const resuming = ref<Record<string, boolean>>({});
+const opening = ref<Record<string, boolean>>({});
 const detailsPanel = ref<HTMLElement>();
 const failedIcons = ref<Record<string, boolean>>({});
 const failedBanners = ref<Record<string, boolean>>({});
@@ -422,6 +481,30 @@ async function resumeVersion(version: InstalledEmulator) {
     error.value = `Could not resume this emulator build: ${cause}`;
   } finally {
     resuming.value[key] = false;
+  }
+}
+
+function canOpenEmulator(version: InstalledEmulator) {
+  return emulatorCanOpen(version, opening.value[dependentHeadingId(version)]);
+}
+
+async function openEmulator(version: InstalledEmulator, launchId: string) {
+  if (!canOpenEmulator(version)) return;
+  const key = dependentHeadingId(version);
+  opening.value[key] = true;
+  error.value = "";
+  try {
+    await invoke("open_emulator", {
+      gameId: version.gameId,
+      versionId: version.versionId,
+      targetPlatform: version.platform,
+      launchId,
+    });
+    await refresh();
+  } catch (cause) {
+    error.value = `Could not open the emulator: ${cause}`;
+  } finally {
+    opening.value[key] = false;
   }
 }
 

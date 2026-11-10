@@ -98,15 +98,20 @@ pub fn refresh_installed_launches(
     expected_platform: Platform,
     remote: database::GameVersion,
 ) -> bool {
+    let installed_game = db
+        .applications
+        .installed_game_version
+        .get(game_id)
+        .is_some_and(|meta| {
+            meta.version == expected_version && meta.target_platform == expected_platform
+        });
+    let installed_emulator = db
+        .applications
+        .emulator_installation(game_id, expected_version, expected_platform)
+        .is_some();
     if remote.game_id != game_id
         || remote.version_id != expected_version
-        || !db
-            .applications
-            .installed_game_version
-            .get(game_id)
-            .is_some_and(|meta| {
-                meta.version == expected_version && meta.target_platform == expected_platform
-            })
+        || !(installed_game || installed_emulator)
         || db
             .applications
             .transient_statuses
@@ -123,6 +128,24 @@ pub fn refresh_installed_launches(
     }
     current.launches = remote.launches;
     true
+}
+
+/// Resolve only explicit standalone commands for the installed build/platform.
+pub fn direct_open_launches<'a>(
+    version: &'a database::GameVersion,
+    platform: Platform,
+    host: Platform,
+) -> impl Iterator<Item = &'a database::models::data::LaunchConfiguration> {
+    version.launches.iter().filter(move |launch| {
+        launch.platform == platform
+            && launch.platform.can_run_on(host, launch.proton_compatible)
+            && launch.emulator.is_none()
+            && launch
+                .emulator_profile
+                .as_ref()
+                .and_then(|profile| profile.direct_open_command.as_ref())
+                .is_some_and(|command| !command.trim().is_empty())
+    })
 }
 
 /// Match the installed game's pinned launches, not the latest server version.
@@ -354,6 +377,107 @@ mod tests {
         let meta = DownloadableMetadata::new(id.into(), version.into(), platform, if id == "emu" { DownloadType::Emulator } else { DownloadType::Game });
         db.applications.record_installation(&meta, GameDownloadStatus::Installed { install_type: InstalledGameType::Installed, install_dir: path.to_string_lossy().into_owned(), version_id: version.into(), update_available: false });
         meta
+    }
+
+    #[test]
+    fn direct_open_requires_an_explicit_command_for_the_exact_platform() {
+        let version: GameVersion = serde_json::from_value(json!({
+            "gameId": "emu", "versionId": "v1", "versionPath": "emu.zip", "onlySetup": false, "versionIndex": 0, "delta": false,
+            "launches": [
+                { "launchId": "legacy", "name": "Legacy", "command": "emulator '{rom}'", "platform": "Linux" },
+                { "launchId": "cli", "name": "CLI", "command": "emulator '{rom}'", "platform": "Linux", "emulatorProfile": { "mode": "cli", "configFiles": [], "directOpenCommand": "emulator --gui" } },
+                { "launchId": "ui", "name": "UI", "command": "emulator", "platform": "Linux", "emulatorProfile": { "mode": "ui", "configFiles": [], "directOpenCommand": " " } },
+                { "launchId": "win", "name": "Windows", "command": "emulator.exe '{rom}'", "platform": "Windows", "protonCompatible": false, "emulatorProfile": { "mode": "cli", "configFiles": [], "directOpenCommand": "emulator.exe" } }
+            ], "setups": []
+        })).unwrap();
+        assert_eq!(
+            direct_open_launches(&version, Platform::Linux, Platform::Linux)
+                .map(|launch| launch.launch_id.as_str())
+                .collect::<Vec<_>>(),
+            ["cli"]
+        );
+        assert_eq!(
+            direct_open_launches(&version, Platform::Windows, Platform::Linux).count(),
+            0
+        );
+        assert_eq!(
+            direct_open_launches(&version, Platform::Windows, Platform::Windows).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn standalone_gui_blocks_duplicate_launch_repair_and_uninstall_without_appearing_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::new(dir.path(), None, dir.path().join("cache"));
+        let meta = add_install(&mut db, "emu", "v1", Platform::Linux, dir.path(), None);
+        db.applications
+            .transient_statuses
+            .insert(meta.clone(), ApplicationTransientStatus::Running {});
+        assert!(emulator_in_use(&db, &meta));
+        assert!(reserve_emulator_download(&mut db, &meta).is_ok_and(|reserved| !reserved));
+        assert!(begin_emulator_uninstall(&mut db, "emu", "v1", Platform::Linux, &[]).is_err());
+        assert!(
+            emulator_install_path(&db, "emu", "v1", Platform::Linux, &[], Platform::Linux)
+                .is_some()
+        );
+        db.applications.transient_statuses.remove(&meta);
+        assert!(
+            emulator_install_path(&db, "emu", "v1", Platform::Linux, &[], Platform::Linux)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn installed_emulator_commands_refresh_without_redownloading_or_changing_preferences() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Database::new(dir.path(), None, dir.path().join("cache"));
+        let meta = add_install(&mut db, "emu", "v1", Platform::Linux, dir.path(), None);
+        let mut remote = db.applications.game_versions["v1"].clone();
+        remote.launches[0].command = "new command".into();
+        db.applications
+            .game_versions
+            .get_mut("v1")
+            .unwrap()
+            .user_configuration
+            .enable_updates = false;
+        assert!(refresh_installed_launches(
+            &mut db,
+            "emu",
+            "v1",
+            Platform::Linux,
+            remote.clone()
+        ));
+        assert!(
+            !db.applications.game_versions["v1"]
+                .user_configuration
+                .enable_updates
+        );
+        assert_eq!(
+            db.applications
+                .emulator_installation("emu", "v1", Platform::Linux)
+                .unwrap()
+                .metadata,
+            meta
+        );
+        assert!(!refresh_installed_launches(
+            &mut db,
+            "emu",
+            "v1",
+            Platform::Windows,
+            remote.clone()
+        ));
+        db.applications
+            .transient_statuses
+            .insert(meta, ApplicationTransientStatus::Running {});
+        remote.launches.clear();
+        assert!(!refresh_installed_launches(
+            &mut db,
+            "emu",
+            "v1",
+            Platform::Linux,
+            remote
+        ));
     }
 
     #[test]

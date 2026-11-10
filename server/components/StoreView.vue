@@ -96,7 +96,7 @@
                             <div class="group grid size-4 grid-cols-1">
                               <input
                                 v-if="section.multiple"
-                                :id="`filter-${section.param}-${option}`"
+                                :id="`filter-mobile-${section.param}-${optionIdx}`"
                                 v-model="
                                   (optionValues[section.param] as any)[
                                     option.param
@@ -376,6 +376,7 @@ import {
 import type { SerializeObject } from "nitropack";
 import type { GameModel, GameTagModel } from "~/prisma/client/models";
 import { Platform } from "~/prisma/client/enums";
+const { t } = useI18n();
 const {
   store: { showGamePanelTextDecoration },
 } = await $dropFetch(`/api/v1/settings`);
@@ -434,6 +435,15 @@ const options: Array<StoreFilterOption> = [
     param: "platform",
     multiple: true,
     options: Object.values(Platform).map((e) => ({ name: e, param: e })),
+  },
+  {
+    name: t("store.view.gameType"),
+    param: "emulated",
+    multiple: true,
+    options: [
+      { name: t("store.view.emulated"), param: "true" },
+      { name: t("store.view.native"), param: "false" },
+    ],
   },
   ...(props.extraOptions ?? []),
 ];
