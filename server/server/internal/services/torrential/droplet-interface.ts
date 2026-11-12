@@ -273,10 +273,12 @@ class DropletInterfaceManager {
     versionDir: string,
     progress: (v: number) => void,
     log: (v: string) => void,
+    archiveDownload = false,
   ) {
     const messageId = crypto.randomUUID();
     const manifestGenerationRequest = create(GenerateManifestSchema, {
       versionDir,
+      archiveDownload,
     });
 
     await TORRENTIAL_SERVICE.writeMessage(messageId, {

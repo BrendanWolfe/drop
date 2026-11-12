@@ -2,10 +2,10 @@ use std::{collections::HashMap, ops::Not, path::Path};
 
 use anyhow::anyhow;
 use async_trait::async_trait;
-pub use droplet_types::{ChunkData, FileEntry, Manifest};
+pub use droplet_types::{ARCHIVE_MANIFEST_VERSION, ChunkData, FileEntry, Manifest};
 use futures::StreamExt;
 use hex::ToHex as _;
-use humansize::{format_size, BINARY};
+use humansize::{BINARY, format_size};
 use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::io::{AsyncReadExt as _, AsyncWrite};
@@ -42,6 +42,21 @@ where
     let backend = create_backend_constructor(dir).ok_or(anyhow!(
         "Could not create backend for path. Is this structure supported?"
     ))?()?;
+    generate_backend_manifest(backend.as_ref(), progress_sfn, log_sfn, factory, semaphore).await
+}
+
+async fn generate_backend_manifest<LogFn, ProgFn, Writer>(
+    backend: &(dyn VersionBackend + Send + Sync),
+    progress_sfn: ProgFn,
+    log_sfn: LogFn,
+    factory: Option<&dyn ManifestWriterFactory<Writer = Writer>>,
+    semaphore: Option<&Semaphore>,
+) -> anyhow::Result<Manifest>
+where
+    LogFn: Fn(String) + Clone,
+    ProgFn: Fn(f32),
+    Writer: AsyncWrite + Unpin,
+{
     let mut files = backend.list_files().await?;
     files.sort_by_key(|b| std::cmp::Reverse(b.size));
 
@@ -54,7 +69,7 @@ where
         chunks.len()
     ));
     let manifest = read_chunks_and_generate_manifest(
-        backend.as_ref(),
+        backend,
         chunks,
         progress_sfn,
         &log_sfn,
@@ -76,7 +91,118 @@ where
         chunks: manifest,
         size: total_manifest_length,
         key,
+        archive: None,
     })
+}
+
+/// Hash compressed bytes in order. Header inspection is one pass, not one pass
+/// per file. Nothing is extracted or cached on the server.
+pub async fn generate_archive_manifest<P, LogFn, ProgFn>(
+    path: P,
+    progress: ProgFn,
+    log: LogFn,
+) -> anyhow::Result<Manifest>
+where
+    P: AsRef<Path>,
+    LogFn: Fn(String) + Clone,
+    ProgFn: Fn(f32),
+{
+    use crate::versions::raw_archive_backend::RawArchiveBackend;
+    use droplet_types::{ARCHIVE_MANIFEST_VERSION, ArchiveMetadata};
+
+    let path = path.as_ref();
+    let backend = RawArchiveBackend::new(path.to_path_buf())?;
+    log("Inspecting archive headers...".to_string());
+    let archive_path = path.to_path_buf();
+    let install_size =
+        tokio::task::spawn_blocking(move || inspect_archive(&archive_path)).await??;
+    log("Hashing compressed archive bytes (no server extraction)...".to_string());
+    let semaphore = Semaphore::new(1);
+    let mut manifest = generate_backend_manifest(
+        &backend,
+        progress,
+        log,
+        None::<&dyn ManifestWriterFactory<Writer = tokio::io::SimplexStream>>,
+        Some(&semaphore),
+    )
+    .await?;
+    manifest.version = ARCHIVE_MANIFEST_VERSION.to_string();
+    manifest.archive = Some(ArchiveMetadata { install_size });
+    Ok(manifest)
+}
+
+fn inspect_archive(path: &Path) -> anyhow::Result<u64> {
+    use libarchive_drop::{
+        archive::{Entry, FileType, ReadCompression, ReadFormat},
+        reader::{Builder, Reader},
+    };
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    anyhow::ensure!(
+        [
+            ".rar", ".zip", ".7z", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz"
+        ]
+        .iter()
+        .any(|ext| name.ends_with(ext)),
+        "Archive download mode supports single-file RAR, ZIP, 7z and tar archives"
+    );
+    // Multipart RARs cannot be installed from a single downloaded payload.
+    if name.ends_with(".rar") {
+        anyhow::ensure!(
+            !path.with_extension("r00").exists() && !path.with_extension("R00").exists(),
+            "Multipart RAR archives are not supported; use a single-file archive"
+        );
+        if let Some((_, part)) = name.rsplit_once(".part") {
+            anyhow::ensure!(
+                !part
+                    .trim_end_matches(".rar")
+                    .chars()
+                    .all(|c| c.is_ascii_digit()),
+                "Multipart RAR archives are not supported; use a single-file archive"
+            );
+        }
+    }
+    let mut builder = Builder::new();
+    builder.support_format(ReadFormat::All)?;
+    builder.support_compression(ReadCompression::All)?;
+    let mut archive = builder.open_file(path)?;
+    let mut install_size = 0u64;
+    let mut count = 0usize;
+    let mut entries = 0usize;
+    let mut files = std::collections::HashSet::new();
+    while let Some(entry) = archive.next_header_checked()? {
+        entries += 1;
+        anyhow::ensure!(entries <= 1_000_000, "Archive contains too many entries");
+        anyhow::ensure!(
+            !entry.is_encrypted(),
+            "Password-protected archives are not supported"
+        );
+        let name = entry.pathname_checked()?;
+        if matches!(name, "." | "./") && matches!(entry.filetype(), FileType::Directory) {
+            continue;
+        }
+        let relative = droplet_types::archive_relative_path(name)?;
+        anyhow::ensure!(!entry.has_hardlink(), "Archive links are not supported");
+        match entry.filetype() {
+            FileType::Directory => continue,
+            FileType::RegularFile => (),
+            _ => anyhow::bail!("Archive links and special files are not supported"),
+        }
+        anyhow::ensure!(
+            files.insert(relative),
+            "Archive contains duplicate file paths"
+        );
+        install_size = install_size
+            .checked_add(u64::try_from(entry.size())?)
+            .ok_or_else(|| anyhow!("Archive is too large"))?;
+        count += 1;
+        anyhow::ensure!(count <= 1_000_000, "Archive contains too many files");
+    }
+    anyhow::ensure!(count > 0, "Archive contains no files");
+    Ok(install_size)
 }
 
 fn organise_files(

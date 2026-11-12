@@ -496,6 +496,8 @@
         "selectGameSearch": "Select game",
         "selectPlatform": "Please select a platform…",
         "version": {
+          "archiveDownload": "Download archive and extract on client",
+          "archiveDownloadDesc": "Transfer the original RAR, ZIP, 7z or tar archive, verify it, then extract locally. Best for games with many small files. Requires an updated desktop client and temporary space for the archive plus the installed game. Complete versions only; multipart and password-protected archives are not supported.",
           "displayName": "Display Name",
           "displayNameDesc": "Optionally, set the display name of the version. If not set, uses the name in the dropdown.",
           "displayNamePlaceholder": "My New Version",

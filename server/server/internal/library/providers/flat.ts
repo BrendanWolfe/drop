@@ -77,6 +77,7 @@ export class FlatFilesystemProvider implements LibraryProvider<
     _version: string,
     progress: (v: number) => void,
     log: (v: string) => void,
+    archiveDownload = false,
   ) {
     const versionDir = path.join(this.config.baseDir, game);
     if (!fs.existsSync(versionDir)) throw new VersionNotFoundError();
@@ -84,6 +85,7 @@ export class FlatFilesystemProvider implements LibraryProvider<
       versionDir,
       progress,
       log,
+      archiveDownload,
     );
     return manifest;
   }

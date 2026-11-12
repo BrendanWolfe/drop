@@ -10,6 +10,7 @@ use libarchive3_sys::ffi;
 // rather than interpreting Windows' current-codepage filenames as UTF-8.
 extern "C" {
     fn archive_entry_pathname_utf8(entry: *mut ffi::Struct_archive_entry) -> *const libc::c_char;
+    fn archive_entry_is_encrypted(entry: *mut ffi::Struct_archive_entry) -> libc::c_int;
 }
 
 pub enum ReadCompression {
@@ -138,6 +139,10 @@ pub trait Entry {
 
     fn has_hardlink(&self) -> bool {
         unsafe { !ffi::archive_entry_hardlink(self.entry()).is_null() }
+    }
+
+    fn is_encrypted(&self) -> bool {
+        unsafe { archive_entry_is_encrypted(self.entry()) > 0 }
     }
 
     fn permissions(&self) -> u32 {

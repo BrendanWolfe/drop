@@ -68,6 +68,16 @@ fn create_backend(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
+    if version_data
+        .manifest
+        .as_ref()
+        .is_some_and(|manifest| manifest.version == droplet_rs::manifest::ARCHIVE_MANIFEST_VERSION)
+    {
+        return droplet_rs::versions::raw_archive_backend::RawArchiveBackend::new(version_path)
+            .map(|backend| Box::new(backend) as Box<dyn VersionBackend + Send + Sync>)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
     let backend =
         create_backend_constructor(&version_path).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 

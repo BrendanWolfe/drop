@@ -84,6 +84,7 @@ export class FilesystemProvider implements LibraryProvider<
     version: string,
     progress: (v: number) => void,
     log: (v: string) => void,
+    archiveDownload = false,
   ): Promise<string> {
     const versionDir = path.join(this.config.baseDir, game, version);
     if (!fs.existsSync(versionDir)) throw new VersionNotFoundError();
@@ -91,6 +92,7 @@ export class FilesystemProvider implements LibraryProvider<
       versionDir,
       progress,
       log,
+      archiveDownload,
     );
     return manifest;
   }

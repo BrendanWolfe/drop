@@ -6,7 +6,7 @@ use std::path::Path;
 use test_generator::test_resources;
 use tokio::io::SimplexStream;
 
-use crate::manifest::{generate_manifest_rusty, ManifestWriterFactory};
+use crate::manifest::{ManifestWriterFactory, generate_manifest_rusty};
 
 #[test_resources("testfiles/**/*.7z")]
 fn manifest_gen(resource: &str) {
@@ -137,11 +137,29 @@ mod archive_reader {
         let central_size = central.len() as u32;
         out.extend_from_slice(&central);
 
+        if entries.len() >= u16::MAX as usize {
+            let zip64_offset = out.len() as u64;
+            push_u32(&mut out, 0x0606_4b50);
+            out.extend_from_slice(&44u64.to_le_bytes());
+            push_u16(&mut out, 45);
+            push_u16(&mut out, 45);
+            push_u32(&mut out, 0);
+            push_u32(&mut out, 0);
+            out.extend_from_slice(&(entries.len() as u64).to_le_bytes());
+            out.extend_from_slice(&(entries.len() as u64).to_le_bytes());
+            out.extend_from_slice(&(central_size as u64).to_le_bytes());
+            out.extend_from_slice(&(central_offset as u64).to_le_bytes());
+            push_u32(&mut out, 0x0706_4b50);
+            push_u32(&mut out, 0);
+            out.extend_from_slice(&zip64_offset.to_le_bytes());
+            push_u32(&mut out, 1);
+        }
+
         push_u32(&mut out, 0x0605_4b50);
         push_u16(&mut out, 0);
         push_u16(&mut out, 0);
-        push_u16(&mut out, entries.len() as u16);
-        push_u16(&mut out, entries.len() as u16);
+        push_u16(&mut out, entries.len().min(u16::MAX as usize) as u16);
+        push_u16(&mut out, entries.len().min(u16::MAX as usize) as u16);
         push_u32(&mut out, central_size);
         push_u32(&mut out, central_offset);
         push_u16(&mut out, 0);
@@ -276,5 +294,149 @@ mod archive_reader {
         }
 
         assert_eq!(read_all(&mut *reader, 4096).await, payload);
+    }
+
+    #[tokio::test]
+    async fn archive_download_hashes_the_original_archive_and_serves_exact_ranges() {
+        use crate::{
+            manifest::generate_archive_manifest, versions::raw_archive_backend::RawArchiveBackend,
+        };
+        use droplet_types::{ARCHIVE_FILENAME, ARCHIVE_MANIFEST_VERSION};
+        use sha2::{Digest, Sha256};
+        let bytes = zip_stored(&[("game/play.exe", b"game"), ("game/assets.bin", b"assets")]);
+        let temp = TempZip::new(&bytes);
+        let manifest = generate_archive_manifest(temp.path(), |_| {}, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(manifest.version, ARCHIVE_MANIFEST_VERSION);
+        assert_eq!(manifest.size, bytes.len() as u64);
+        assert_eq!(manifest.archive.unwrap().install_size, 10);
+        assert_eq!(manifest.chunks.len(), 1);
+        let chunk = manifest.chunks.values().next().unwrap();
+        assert_eq!(chunk.checksum, hex::encode(Sha256::digest(&bytes)));
+        assert_eq!(chunk.files[0].filename, ARCHIVE_FILENAME);
+        let backend = RawArchiveBackend::new(temp.path().to_path_buf()).unwrap();
+        let file = backend
+            .peek_file(ARCHIVE_FILENAME.to_string())
+            .await
+            .unwrap();
+        let mut reader = backend.reader(&file, 7, 37).await.unwrap();
+        assert_eq!(read_all(&mut *reader, 5).await, bytes[7..37]);
+        assert!(
+            backend
+                .reader(&file, 3, bytes.len() as u64 + 1)
+                .await
+                .is_err()
+        );
+        assert!(backend.peek_file("game/play.exe".into()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn archive_download_supports_zip64_with_187260_files() {
+        let names: Vec<_> = (0..187_260)
+            .map(|index| format!("assets/{index}.bin"))
+            .collect();
+        let entries: Vec<_> = names
+            .iter()
+            .map(|name| (name.as_str(), b"x".as_slice()))
+            .collect();
+        let bytes = zip_stored(&entries);
+        let temp = TempZip::new(&bytes);
+        let manifest = crate::manifest::generate_archive_manifest(temp.path(), |_| {}, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(manifest.archive.unwrap().install_size, 187_260);
+        assert_eq!(
+            manifest.chunks.len(),
+            1,
+            "files inside the ZIP must not become transfer chunks"
+        );
+        assert_eq!(manifest.size, bytes.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn archive_download_supports_rar4_rar5_and_solid_rar() {
+        for name in [
+            "test_read_format_rar_windows.rar",
+            "test_read_format_rar5_compressed.rar",
+            "test_read_format_rar5_solid.rar",
+        ] {
+            let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../desktop/src-tauri/games/tests/fixtures")
+                .join(name);
+            let manifest = crate::manifest::generate_archive_manifest(&path, |_| {}, |_| {})
+                .await
+                .unwrap();
+            assert_eq!(manifest.size, std::fs::metadata(&path).unwrap().len());
+            assert!(manifest.archive.unwrap().install_size > 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn archive_download_rejects_reserved_and_traversal_paths() {
+        for name in [
+            "../escape",
+            ".dropdata",
+            ".drop-archive-cache/payload",
+            "C:\\escape",
+        ] {
+            let temp = TempZip::new(&zip_stored(&[(name, b"bad")]));
+            assert!(
+                crate::manifest::generate_archive_manifest(temp.path(), |_| {}, |_| {})
+                    .await
+                    .is_err(),
+                "{name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn raw_archive_byte_ranges_support_offsets_above_four_gibibytes() {
+        use crate::versions::raw_archive_backend::RawArchiveBackend;
+        use std::io::{Seek, SeekFrom, Write};
+        let temp = TempZip::new(b"header");
+        let offset = 5 * 1024 * 1024 * 1024u64;
+        let mut handle = std::fs::OpenOptions::new()
+            .write(true)
+            .open(temp.path())
+            .unwrap();
+        handle.seek(SeekFrom::Start(offset)).unwrap();
+        handle.write_all(b"late bytes").unwrap();
+        drop(handle);
+        let backend = RawArchiveBackend::new(temp.path().to_path_buf()).unwrap();
+        let file = backend
+            .peek_file(droplet_types::ARCHIVE_FILENAME.into())
+            .await
+            .unwrap();
+        let mut reader = backend.reader(&file, offset, offset + 10).await.unwrap();
+        assert_eq!(read_all(&mut *reader, 3).await, b"late bytes");
+    }
+
+    #[tokio::test]
+    async fn archive_download_rejects_invalid_encrypted_and_duplicate_entries() {
+        for bytes in [
+            b"<html>not an archive</html>".to_vec(),
+            zip_stored(&[("game.exe", b"a"), ("game.exe", b"b")]),
+        ] {
+            let temp = TempZip::new(&bytes);
+            assert!(
+                crate::manifest::generate_archive_manifest(temp.path(), |_| {}, |_| {})
+                    .await
+                    .is_err()
+            );
+        }
+        let mut bytes = zip_stored(&[("encrypted.exe", b"secret")]);
+        bytes[6] = 1;
+        let central = bytes
+            .windows(4)
+            .position(|bytes| bytes == b"PK\x01\x02")
+            .unwrap();
+        bytes[central + 8] = 1;
+        let temp = TempZip::new(&bytes);
+        assert!(
+            crate::manifest::generate_archive_manifest(temp.path(), |_| {}, |_| {})
+                .await
+                .is_err()
+        );
     }
 }

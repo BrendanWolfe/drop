@@ -80,6 +80,26 @@
     </Listbox>
 
     <div v-if="versionGuesses" class="flex flex-col gap-4">
+      <label
+        v-if="versions[currentlySelectedVersion]?.archiveDownloadAvailable"
+        class="flex min-h-11 cursor-pointer items-start gap-3 rounded-xl bg-zinc-800 p-4"
+      >
+        <input
+          v-model="versionSettings.archiveDownload"
+          type="checkbox"
+          class="mt-1 size-5 shrink-0 rounded border-zinc-600 bg-zinc-950 text-blue-600 focus:ring-blue-500"
+          aria-describedby="archive-download-help"
+          @change="versionSettings.delta = false"
+        />
+        <span class="flex flex-col gap-1">
+          <span class="text-sm font-medium text-zinc-100">{{
+            $t("library.admin.import.version.archiveDownload")
+          }}</span>
+          <span id="archive-download-help" class="text-sm text-zinc-400">{{
+            $t("library.admin.import.version.archiveDownloadDesc")
+          }}</span>
+        </span>
+      </label>
       <!-- version display name -->
       <div class="bg-zinc-800 p-4 rounded-xl relative flex flex-col gap-y-2">
         <div>
@@ -268,6 +288,7 @@
       </div>
 
       <SwitchGroup
+        v-if="!versionSettings.archiveDownload"
         as="div"
         class="bg-zinc-800 p-4 rounded-xl flex items-center gap-4 justify-between"
       >
@@ -389,6 +410,7 @@ const currentlySelectedVersion = ref(-1);
 const versionSettings = ref<Omit<typeof ImportVersion.infer, "version" | "id">>(
   {
     delta: false,
+    archiveDownload: false,
     onlySetup: type === GameType.Dependency,
     launches: [],
     setups: [],
@@ -404,6 +426,7 @@ const importError = ref<string | undefined>();
 async function updateCurrentlySelectedVersion(value: number) {
   if (currentlySelectedVersion.value == value) return;
   currentlySelectedVersion.value = value;
+  versionSettings.value.archiveDownload = false;
   const version = versions[currentlySelectedVersion.value];
   try {
     const results = await $dropFetch(`/api/v1/admin/import/version/preload`, {

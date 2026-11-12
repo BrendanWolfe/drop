@@ -40,6 +40,7 @@ use crate::state::GameStatusManager;
 
 use super::download_logic::download_game_chunk;
 use super::drop_data::DropData;
+use super::server_archive;
 
 static RETRY_COUNT: usize = 3;
 
@@ -162,7 +163,20 @@ impl GameDownloadAgent {
 
         result.ensure_manifest_exists().await?;
 
-        let required_space = lock!(result.dl_info).as_ref().unwrap().install_size;
+        let required_space = {
+            let info = lock!(result.dl_info);
+            let info = info.as_ref().unwrap();
+            let archive = server_archive::validate(&info.manifests, &result.metadata.version)?;
+            if archive.is_some() {
+                server_archive::required_space(
+                    &result.dropdata.base_path,
+                    &result.metadata.version,
+                    &info.manifests[&result.metadata.version],
+                )?
+            } else {
+                info.install_size
+            }
+        };
 
         let available_space = get_disk_available(data_base_dir_path)? as u64;
 
@@ -229,12 +243,18 @@ impl GameDownloadAgent {
 
     // Blocking
     pub async fn download(&self, app_handle: &AppHandle) -> Result<bool, ApplicationDownloadError> {
+        let archive = self.archive_size()?;
+        let lease = if archive.is_some() {
+            Some(server_archive::Lease::acquire(&self.dropdata.base_path)?)
+        } else {
+            None
+        };
         self.setup_download(app_handle)?;
         let timer = Instant::now();
 
         info!("beginning download for {}...", self.metadata().id);
 
-        let res = self.run().await;
+        let res = self.run(app_handle, archive, lease).await;
 
         debug!(
             "{} took {}ms to download",
@@ -263,6 +283,7 @@ impl GameDownloadAgent {
             &[
                 ("id", &self.metadata.id),
                 ("version", &self.metadata.version),
+                ("archive", "true"),
                 (
                     "previous",
                     self.dropdata
@@ -325,20 +346,37 @@ impl GameDownloadAgent {
         self.disk_progress.reset();
     }
 
-    async fn run(&self) -> Result<bool, ApplicationDownloadError> {
+    fn archive_size(&self) -> Result<Option<u64>, ApplicationDownloadError> {
+        let info = lock!(self.dl_info);
+        let info = info.as_ref().ok_or(ApplicationDownloadError::Lock)?;
+        server_archive::validate(&info.manifests, &self.metadata.version)
+    }
+
+    async fn run(
+        &self,
+        app_handle: &AppHandle,
+        archive_size: Option<u64>,
+        lease: Option<Arc<server_archive::Lease>>,
+    ) -> Result<bool, ApplicationDownloadError> {
         super::initialize_download_speed_limit_from_db();
         self.depot_manager.sync_depots().await?;
         info!("synced depots");
         self.setup_progress();
         info!("setup progress objects");
-        let manifests_chunks: Vec<(String, HashMap<String, ChunkData>, [u8; 16])> = {
+        let manifests_chunks: Vec<(String, Vec<(String, ChunkData)>, [u8; 16])> = {
             let dl_info = lock!(self.dl_info);
             dl_info
                 .as_ref()
                 .unwrap()
                 .manifests
                 .iter()
-                .map(|v| (v.0.clone(), v.1.chunks.clone(), v.1.key))
+                .map(|(id, manifest)| {
+                    let mut chunks: Vec<_> = manifest.chunks.clone().into_iter().collect();
+                    if archive_size.is_some() {
+                        chunks.sort_by_key(|(_, chunk)| chunk.files[0].start);
+                    }
+                    (id.clone(), chunks, manifest.key)
+                })
                 .collect()
         };
         let file_list = {
@@ -356,9 +394,46 @@ impl GameDownloadAgent {
             max_download_threads = 1;
         }
 
+        let archive_cache = if archive_size.is_some() {
+            let cache = server_archive::prepare(&self.dropdata.base_path, &self.metadata.version)?;
+            let manifest =
+                lock!(self.dl_info).as_ref().unwrap().manifests[&self.metadata.version].clone();
+            // Verification below runs on a blocking worker, not the UI/runtime.
+            let cached = completed_chunks.clone();
+            let stage = cache.clone();
+            let control = self.control_flag.clone();
+            completed_chunks = tokio::task::spawn_blocking(move || {
+                server_archive::verified_contexts(&stage, &manifest, &cached, &control)
+            })
+            .await
+            .map_err(|_| server_archive::fail("Archive verification worker failed"))??;
+            // A pause during verification must not discard checkpoints for
+            // ranges we haven't checked yet; leave them for the next resume.
+            if self.control_flag.get() == DownloadThreadControlFlag::Stop {
+                return Ok(false);
+            }
+            self.dropdata.set_contexts(
+                &completed_chunks
+                    .iter()
+                    .map(|(id, valid)| (id.clone(), *valid))
+                    .collect::<Vec<_>>(),
+            );
+            self.dropdata.write();
+            // During transfer the disk counter measures the staged archive.
+            self.disk_progress
+                .set_max(lock!(self.dl_info).as_ref().unwrap().download_size as usize);
+            Some(cache)
+        } else {
+            None
+        };
+
         let file_list = &file_list;
-        let base_path = &self.dropdata.base_path;
-        let current_file_tree = self.scan_filetree(base_path)?;
+        let base_path = archive_cache.as_ref().unwrap_or(&self.dropdata.base_path);
+        let current_file_tree = if archive_size.is_none() {
+            self.scan_filetree(base_path)?
+        } else {
+            Vec::new()
+        };
 
         for file in current_file_tree {
             let filename = file
@@ -515,6 +590,56 @@ impl GameDownloadAgent {
                 chunk_len,
             );
             return Ok(false);
+        }
+        if let Some(expected_size) = archive_size {
+            if self.control_flag.get() == DownloadThreadControlFlag::Stop {
+                return Ok(false);
+            }
+            *lock!(self.status) = DownloadStatus::Extracting;
+            let status = ApplicationTransientStatus::Extracting {
+                version_id: self.metadata.version.clone(),
+            };
+            borrow_db_mut_checked()
+                .applications
+                .transient_statuses
+                .insert(self.metadata(), status.clone());
+            push_game_update(app_handle, &self.metadata.id, None, (None, Some(status)));
+            let path = base_path.join(droplet_types::ARCHIVE_FILENAME);
+            // A resumed cache may have stale trailing bytes. Extract exactly
+            // the verified archive, never bytes outside its manifest ranges.
+            let archive_length = lock!(self.dl_info).as_ref().unwrap().download_size;
+            tokio::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .await?
+                .set_len(archive_length)
+                .await?;
+            let root = self.dropdata.base_path.clone();
+            let id = self.metadata.id.clone();
+            let version = self.metadata.version.clone();
+            let control = self.control_flag.clone();
+            let disk = self.disk_progress.clone();
+            let mut stop_on_drop = server_archive::StopOnDrop(Some(control.clone()));
+            let extraction_lease = lease.clone();
+            let extracted = tokio::task::spawn_blocking(move || {
+                let _lease = extraction_lease;
+                super::extract::extract_managed(
+                    &path,
+                    &root,
+                    &id,
+                    &version,
+                    expected_size,
+                    &control,
+                    &disk,
+                )
+            })
+            .await
+            .map_err(|_| server_archive::fail("Archive extraction worker failed"))??;
+            stop_on_drop.0 = None;
+            if !extracted {
+                return Ok(false);
+            }
+            self.dropdata.write();
         }
         Ok(true)
     }
@@ -700,7 +825,11 @@ impl Downloadable for GameDownloadAgent {
             app_handle,
         )
         .await
-        .map_err(ApplicationDownloadError::DownloadError)
+        .map_err(ApplicationDownloadError::DownloadError)?;
+        if self.archive_size()?.is_some() {
+            server_archive::cleanup(&self.dropdata.base_path);
+        }
+        Ok(())
     }
 
     fn on_cancelled(&self, app_handle: &tauri::AppHandle) {

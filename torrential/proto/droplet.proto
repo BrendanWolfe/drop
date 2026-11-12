@@ -25,6 +25,7 @@ message ClientCertResponse {
 /// Manifest generation
 message GenerateManifest {
   string version_dir = 1;
+  bool archive_download = 2;
 }
 
 message ManifestProgress {

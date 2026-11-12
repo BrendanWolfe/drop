@@ -7,7 +7,7 @@ use droplet_rs::manifest::ManifestWriterFactory;
 use log::info;
 use protobuf::Message;
 use serde_json::json;
-use tokio::{io::{BufWriter, SimplexStream}, spawn, sync::Semaphore};
+use tokio::{io::SimplexStream, spawn, sync::Semaphore};
 
 use crate::{
     proto::{
@@ -33,40 +33,47 @@ pub async fn generate_manifest_rpc(
 ) -> Result<(), anyhow::Error> {
     let manifest_message = GenerateManifest::parse_from_bytes(&message.data)?;
 
-    let manifest = droplet_rs::manifest::generate_manifest_rusty(
-        &PathBuf::from(manifest_message.version_dir),
-        |progress| {
-            let mut progress_message = ManifestProgress::new();
-            progress_message.progress = progress;
+    let progress = |progress| {
+        let mut progress_message = ManifestProgress::new();
+        progress_message.progress = progress;
 
-            let server = server.clone();
-            let message_id = message.message_id.clone();
-            spawn(async move {
-                let _ = server
-                    .send_message(
-                        DropBoundType::MANIFEST_PROGRESS,
-                        progress_message,
-                        Some(message_id),
-                    )
-                    .await;
-            });
-        },
-        |log_line| {
-            let mut progress_log = ManifestLog::new();
-            progress_log.log_line = log_line;
+        let server = server.clone();
+        let message_id = message.message_id.clone();
+        spawn(async move {
+            let _ = server
+                .send_message(
+                    DropBoundType::MANIFEST_PROGRESS,
+                    progress_message,
+                    Some(message_id),
+                )
+                .await;
+        });
+    };
+    let log = |log_line| {
+        let mut progress_log = ManifestLog::new();
+        progress_log.log_line = log_line;
 
-            let server = server.clone();
-            let message_id = message.message_id.clone();
-            spawn(async move {
-                let _ = server
-                    .send_message(DropBoundType::MANIFEST_LOG, progress_log, Some(message_id))
-                    .await;
-            });
-        },
-        None::<&dyn ManifestWriterFactory<Writer = SimplexStream>>, // Dummy type signature, not actually used
-        Some(&READER_SEMAPHORE),
-    )
-    .await?;
+        let server = server.clone();
+        let message_id = message.message_id.clone();
+        spawn(async move {
+            let _ = server
+                .send_message(DropBoundType::MANIFEST_LOG, progress_log, Some(message_id))
+                .await;
+        });
+    };
+    let path = PathBuf::from(manifest_message.version_dir);
+    let manifest = if manifest_message.archive_download {
+        droplet_rs::manifest::generate_archive_manifest(&path, progress, log).await?
+    } else {
+        droplet_rs::manifest::generate_manifest_rusty(
+            &path,
+            progress,
+            log,
+            None::<&dyn ManifestWriterFactory<Writer = SimplexStream>>,
+            Some(&READER_SEMAPHORE),
+        )
+        .await?
+    };
 
     let mut manifest_complete = ManifestComplete::new();
     manifest_complete.manifest = json!(manifest).to_string();

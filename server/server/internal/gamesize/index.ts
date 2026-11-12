@@ -48,8 +48,13 @@ class GameSizeManager {
         });
         if (!version) return null;
         if (!version.delta) {
-          const size = castManifest(version.dropletManifest).size;
-          const result = { versionId, installSize: size, downloadSize: size };
+          const manifest = castManifest(version.dropletManifest);
+          const size = manifest.size;
+          const result = {
+            versionId,
+            installSize: manifest.archive?.install_size ?? size,
+            downloadSize: size,
+          };
           await this.gameVersionsSizesCache.set(key, result);
           return result;
         }

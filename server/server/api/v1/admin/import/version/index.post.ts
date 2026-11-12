@@ -33,6 +33,7 @@ export const ImportVersion = type({
 
   onlySetup: "boolean = false",
   delta: "boolean = false",
+  archiveDownload: "boolean = false",
 
   requiredContent: type("string")
     .array()

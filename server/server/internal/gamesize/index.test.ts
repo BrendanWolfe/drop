@@ -78,6 +78,22 @@ test("empty full versions retain zero sizes", async () => {
   assert.equal(createDownloadManifestDetails.mock.callCount(), 0);
 });
 
+test("archive version sizes distinguish compressed download bytes from extracted files", async () => {
+  reset();
+  version!.dropletManifest = JSON.stringify({
+    version: "archive-v1",
+    size: 100,
+    archive: { install_size: 500 },
+  });
+  assert.deepEqual(await gameSizeManager.getVersionSize("archive"), {
+    versionId: "archive",
+    installSize: 500,
+    downloadSize: 100,
+  });
+  assert.equal(createDownloadManifestDetails.mock.callCount(), 0);
+  assert.equal(await gameSizeManager.getVersionDiskSize("archive"), 100);
+});
+
 test("delta versions still calculate sizes across their base versions", async () => {
   reset();
   version!.delta = true;

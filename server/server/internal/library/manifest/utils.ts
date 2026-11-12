@@ -3,10 +3,11 @@ import type { JsonValue } from "@prisma/client/runtime/client";
 export type DropletManifest = V2Manifest;
 
 export type V2Manifest = {
-  version: "2";
+  version: "2" | "archive-v1";
   size: number;
   key: number[];
   chunks: { [key: string]: V2ChunkData };
+  archive?: { install_size: number };
 };
 
 export type V2ChunkData = {
@@ -23,5 +24,7 @@ export type V2FileEntry = {
 };
 
 export function castManifest(manifest: JsonValue): DropletManifest {
-  return JSON.parse(manifest as string) as DropletManifest;
+  return (
+    typeof manifest === "string" ? JSON.parse(manifest) : manifest
+  ) as DropletManifest;
 }

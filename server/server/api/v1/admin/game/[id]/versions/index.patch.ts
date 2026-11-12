@@ -2,6 +2,7 @@ import { type } from "arktype";
 import { readDropValidatedBody, throwingArktype } from "~/server/arktype";
 import aclManager from "~/server/internal/acls";
 import prisma from "~/server/internal/db/database";
+import { castManifest } from "~/server/internal/library/manifest/utils";
 
 const UpdateVersionOrder = type({
   versions: "string[]",
@@ -22,6 +23,7 @@ export default defineEventHandler(async (h3) => {
       versionId: true,
       versionIndex: true,
       delta: true,
+      dropletManifest: true,
       launches: { select: { platform: true } },
     },
   });
@@ -38,7 +40,17 @@ export default defineEventHandler(async (h3) => {
 
   // Validate the new order
   const has: { [key: string]: boolean } = {};
+  let archiveBase = false;
   for (const version of versions) {
+    if (version.delta && archiveBase)
+      throw createError({
+        statusCode: 400,
+        statusMessage:
+          "Delta versions cannot be ordered on top of archive installations.",
+      });
+    if (!version.delta)
+      archiveBase =
+        castManifest(version.dropletManifest).version === "archive-v1";
     for (const versionPlatform of version.launches.map((v) => v.platform)) {
       if (version.delta && !has[versionPlatform])
         throw createError({

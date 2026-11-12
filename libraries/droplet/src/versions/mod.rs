@@ -12,6 +12,7 @@ use crate::versions::archive_backend::ZipVersionBackend;
 // libarchive backend is Linux-only for now
 pub mod archive_backend;
 pub mod path_backend;
+pub mod raw_archive_backend;
 
 pub fn _list_files(vec: &mut Vec<PathBuf>, path: &Path) -> Result<()> {
     if metadata(path)?.is_dir() {
@@ -55,8 +56,13 @@ where
         }));
     };
 
-    let file_extension = path.extension().and_then(|v| v.to_str())?;
-    if SUPPORTED_FILE_EXTENSIONS.contains(&file_extension) {
+    let file_extension = path.extension().and_then(|v| v.to_str())?.to_lowercase();
+    let filename = path.file_name()?.to_str()?.to_lowercase();
+    if SUPPORTED_FILE_EXTENSIONS.contains(&file_extension.as_str())
+        || [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz"]
+            .iter()
+            .any(|extension| filename.ends_with(extension))
+    {
         let buf = path.to_path_buf();
         return Some(Box::new(move || Ok(Box::new(ZipVersionBackend::new(buf)?))));
     }

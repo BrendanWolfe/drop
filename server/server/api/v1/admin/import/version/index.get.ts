@@ -34,7 +34,16 @@ export default defineEventHandler(async (h3) => {
     throw createError({ statusCode: 400, statusMessage: "Invalid game ID" });
 
   return {
-    versions: unimportedVersions,
+    versions: unimportedVersions.map((version) => ({
+      ...version,
+      archiveDownloadAvailable:
+        version.type === "local" &&
+        /\.(rar|zip|7z|tar|tar\.gz|tgz|tar\.bz2|tar\.xz)$/i.test(
+          version.identifier === "default"
+            ? game.libraryPath
+            : version.identifier,
+        ),
+    })),
     type: game.type,
     isEmulated: game.isEmulated,
   };

@@ -91,6 +91,7 @@ export default defineEventHandler(async (h3) => {
             setups,
             onlySetup: version.setupMode,
             delta: false,
+            archiveDownload: false,
             requiredContent: [],
           },
           wrapTaskContext(

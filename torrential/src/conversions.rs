@@ -33,5 +33,7 @@ pub fn convert_protobuf_manifest(source: Manifest) -> droplet_rs::manifest::Mani
             .collect(),
         size: source.size,
         key: fixed_length(source.key),
+        // Serving only needs the payload ranges, not the client's extraction size.
+        archive: None,
     }
 }

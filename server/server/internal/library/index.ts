@@ -421,7 +421,28 @@ class LibraryManager {
   ) {
     const taskKey = createVersionImportTaskKey(gameId, version.identifier);
 
+    if (
+      metadata.archiveDownload &&
+      (metadata.delta || version.type !== "local")
+    )
+      throw createError({
+        statusCode: 400,
+        message:
+          "Archive downloads require a local, complete single-file archive, not an update or uploaded depot.",
+      });
+
     if (metadata.delta) {
+      const base = await prisma.gameVersion.findFirst({
+        where: { gameId, delta: false },
+        orderBy: { versionIndex: "desc" },
+        select: { dropletManifest: true },
+      });
+      if (base && castManifest(base.dropletManifest).version === "archive-v1")
+        throw createError({
+          statusCode: 400,
+          message:
+            "Archive installations cannot be used as a base for delta updates. Import a complete version instead.",
+        });
       for (const platformObject of [
         ...metadata.launches,
         ...metadata.setups,
@@ -575,11 +596,21 @@ class LibraryManager {
               (value) => {
                 logger.info(value);
               },
+              metadata.archiveDownload,
             );
-            fileList = await library.versionReaddir(
-              game.libraryPath,
-              versionPath,
-            );
+            if (metadata.archiveDownload) {
+              const parsed = castManifest(manifest);
+              if (parsed.version !== "archive-v1" || !parsed.archive)
+                throw new Error(
+                  "The depot does not support archive downloads. Update Torrential and retry.",
+                );
+              fileList = [".drop-archive"];
+            } else {
+              fileList = await library.versionReaddir(
+                game.libraryPath,
+                versionPath,
+              );
+            }
             logger.info("Created manifest successfully!");
           } else if (version.type === "depot" && unimportedVersion) {
             manifest = castManifest(unimportedVersion.manifest);

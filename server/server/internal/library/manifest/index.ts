@@ -1,6 +1,6 @@
-import cacheHandler from "../../cache";
-import prisma from "../../db/database";
-import { castManifest, type DropletManifest } from "./utils";
+import cacheHandler from "../../cache/index.ts";
+import prisma from "../../db/database.ts";
+import { castManifest, type DropletManifest } from "./utils.ts";
 
 export type DownloadManifestDetails = {
   /***
@@ -51,6 +51,30 @@ export async function createDownloadManifestDetails(
   if (!mainVersion)
     throw createError({ statusCode: 404, message: "Version not found" });
 
+  const mainManifest = castManifest(mainVersion.dropletManifest);
+  if (mainManifest.version === "archive-v1") {
+    if (
+      mainVersion.delta ||
+      !mainManifest.archive ||
+      !Number.isSafeInteger(mainManifest.archive.install_size) ||
+      mainManifest.archive.install_size < 0
+    )
+      throw createError({
+        statusCode: 500,
+        message: "Invalid archive manifest",
+      });
+    // An archive is always a complete package. Never filter its byte ranges
+    // using the previous installation's extracted file list.
+    const result: DownloadManifestDetails = {
+      manifests: { [versionId]: mainManifest },
+      fileList: { ".drop-archive": versionId },
+      installSize: mainManifest.archive.install_size,
+      downloadSize: mainManifest.size,
+    };
+    await manifestCache.set(manifestKey, result);
+    return result;
+  }
+
   const collectedVersions = [];
   let versionIndex = mainVersion.versionIndex;
   while (mainVersion.delta) {
@@ -72,6 +96,13 @@ export async function createDownloadManifestDetails(
       throw createError({
         statusCode: 500,
         message: "Delta version without version underneath it.",
+      });
+
+    if (castManifest(nextVersion.dropletManifest).version === "archive-v1")
+      throw createError({
+        statusCode: 409,
+        message:
+          "Delta updates cannot be applied to archive installations. Import a complete version.",
       });
 
     versionIndex = nextVersion.versionIndex;

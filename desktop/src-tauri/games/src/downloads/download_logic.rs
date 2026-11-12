@@ -185,9 +185,15 @@ pub async fn download_game_chunk(
             }
         }
 
+        // Tokio filesystem writes can still be pending when write_all returns.
+        // Finish them before checkpointing a chunk or opening its archive for extraction.
+        if let Some(file_handle) = &mut file_handle {
+            file_handle.flush().await?;
+        }
+        drop(file_handle);
+
         #[cfg(unix)]
         {
-            drop(file_handle);
             let permissions = if file.permissions == 0 {
                 0o744
             } else {

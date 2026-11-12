@@ -1,6 +1,7 @@
 import prisma from "~/server/internal/db/database";
 import { defineDropTask, wrapTaskContext } from "..";
 import { libraryManager } from "../../library";
+import { castManifest } from "../../library/manifest/utils";
 
 export default defineDropTask({
   buildId: () => `import:check-integrity:${new Date().toISOString()}`,
@@ -18,6 +19,7 @@ export default defineDropTask({
         versionId: true,
         versionPath: true,
         displayName: true,
+        dropletManifest: true,
         game: {
           select: {
             libraryId: true,
@@ -56,6 +58,7 @@ export default defineDropTask({
         (value) => {
           taskContext.logger.info(value);
         },
+        castManifest(version.dropletManifest).version === "archive-v1",
       );
 
       // SAFETY: this is requested from the database

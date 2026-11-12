@@ -46,6 +46,7 @@ export abstract class LibraryProvider<CFG> {
     version: string,
     progress: (v: number) => void,
     log: (v: string) => void,
+    archiveDownload?: boolean,
   ): Promise<string>;
 
   abstract peekFile(
