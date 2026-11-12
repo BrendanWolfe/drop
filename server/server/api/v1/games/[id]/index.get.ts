@@ -50,6 +50,8 @@ export default defineEventHandler(async (h3) => {
         },
         omit: {
           dropletManifest: true,
+          fileList: true,
+          negativeFileList: true,
         },
         orderBy: {
           versionIndex: "desc",

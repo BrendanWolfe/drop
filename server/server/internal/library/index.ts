@@ -664,7 +664,7 @@ class LibraryManager {
             acls: ["system:import:version:read"],
           });
 
-          // Ensure cache is filled (also pre-caches the manifest)
+          // Pre-cache sizes (full versions do not need a download manifest).
           try {
             await gameSizeManager.getVersionSize(newVersion.versionId);
           } catch (e) {

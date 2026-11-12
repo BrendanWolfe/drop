@@ -1,8 +1,8 @@
-import cacheHandler from "../cache";
-import prisma from "../db/database";
-import { sum } from "../../../utils/array";
-import { createDownloadManifestDetails } from "../library/manifest";
-import { castManifest } from "../library/manifest/utils";
+import cacheHandler from "../cache/index.ts";
+import prisma from "../db/database.ts";
+import { sum } from "../../../utils/array.ts";
+import { createDownloadManifestDetails } from "../library/manifest/index.ts";
+import { castManifest } from "../library/manifest/utils.ts";
 
 export type GameVersionSize = {
   versionId: string;
@@ -38,6 +38,23 @@ class GameSizeManager {
     if (await this.gameVersionsSizesCache.has(key))
       return await this.gameVersionsSizesCache.get(key);
     try {
+      // Full versions contain every file exactly once, so both sizes are already
+      // stored in the manifest. Avoid constructing/caching a per-file download
+      // manifest just to display sizes, especially for very large versions.
+      if (!previousId) {
+        const version = await prisma.gameVersion.findUnique({
+          where: { versionId },
+          select: { delta: true, dropletManifest: true },
+        });
+        if (!version) return null;
+        if (!version.delta) {
+          const size = castManifest(version.dropletManifest).size;
+          const result = { versionId, installSize: size, downloadSize: size };
+          await this.gameVersionsSizesCache.set(key, result);
+          return result;
+        }
+      }
+
       const { downloadSize, installSize } = await createDownloadManifestDetails(
         versionId,
         previousId,
