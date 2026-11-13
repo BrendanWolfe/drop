@@ -3,6 +3,8 @@ import test from "node:test";
 import { ArkErrors, type } from "arktype";
 import {
   emulationFilterSchema,
+  consoleFilterSchema,
+  combineStoreFilters,
   getEmulationFilter,
   getNameFilter,
   nameSearchSchema,
@@ -88,4 +90,104 @@ test("the store accepts only supported game type selections", () => {
   for (const value of ["", "native", "1", "true,invalid", ["true"], true]) {
     assert.ok(querySchema({ emulated: value }) instanceof ArkErrors);
   }
+});
+
+const gameCube = "64ed6877-b773-461e-a2fe-e20e055ed34d";
+const ps2 = "0150e859-081c-4613-a22c-f2e5eb8b2c80";
+
+test("console selections match any selected console and only emulated games", () => {
+  const expected = {
+    isEmulated: true,
+    consoleTypeId: { in: [gameCube, ps2] },
+  };
+  assert.deepEqual(getEmulationFilter("true", `${gameCube},${ps2}`), expected);
+  assert.deepEqual(
+    getEmulationFilter(undefined, `${gameCube},${ps2}`),
+    expected,
+  );
+  assert.deepEqual(
+    getEmulationFilter("true", `${gameCube},${ps2},${gameCube}`),
+    expected,
+  );
+});
+
+test("console subfilters preserve native games when both parent types are selected", () => {
+  const expected = {
+    OR: [
+      { isEmulated: false },
+      { isEmulated: true, consoleTypeId: { in: [gameCube] } },
+    ],
+  };
+  assert.deepEqual(getEmulationFilter("true,false", gameCube), expected);
+  assert.deepEqual(getEmulationFilter("false,true", gameCube), expected);
+});
+
+test("native-only filtering ignores stale console selections", () => {
+  assert.deepEqual(getEmulationFilter("false", gameCube), {
+    isEmulated: false,
+  });
+});
+
+test("clearing console selections includes uncategorized emulated games again", () => {
+  assert.deepEqual(getEmulationFilter("true", ""), { isEmulated: true });
+  assert.deepEqual(getEmulationFilter("true,false", ""), {});
+});
+
+test("console queries accept at most 100 UUIDs, rejecting malformed and oversized input", () => {
+  const schema = type({ consoles: consoleFilterSchema.optional() });
+  for (const consoles of [
+    gameCube,
+    `${gameCube},${ps2}`,
+    Array(100).fill(gameCube).join(","),
+  ])
+    assert.deepEqual(schema({ consoles }), { consoles });
+  assert.deepEqual(schema({}), {});
+  for (const consoles of [
+    "",
+    "GameCube",
+    `${gameCube},`,
+    `${gameCube},bad`,
+    Array(101).fill(gameCube).join(","),
+    [gameCube],
+    null,
+    true,
+  ])
+    assert.ok(schema({ consoles }) instanceof ArkErrors);
+});
+
+test("console OR clauses cannot overwrite platform, company, age, tag or name restrictions", () => {
+  const platform = {
+    OR: [
+      {
+        versions: {
+          some: { launches: { some: { platform: "Linux" as const } } },
+        },
+      },
+    ],
+  };
+  const company = { OR: [{ publishers: { some: { id: "publisher" } } }] };
+  const age = {
+    AND: [
+      { ageRatings: { some: {} } },
+      { NOT: { ageRatings: { some: { rating: "18" } } } },
+    ],
+  };
+  const tags = { tags: { some: { id: "tag" } } };
+  const consoles = getEmulationFilter("true,false", gameCube);
+  const name = getNameFilter("Zelda");
+  assert.deepEqual(
+    combineStoreFilters(
+      platform,
+      company,
+      undefined,
+      age,
+      tags,
+      consoles,
+      name,
+    ),
+    {
+      type: "Game",
+      AND: [platform, company, age, tags, consoles, name],
+    },
+  );
 });

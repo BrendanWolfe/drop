@@ -166,11 +166,20 @@
         >
       </label>
 
+      <ConsoleTypeSelector
+        v-if="importMode === 'Game' && isEmulated"
+        v-model="consoleTypeId"
+        :disabled="importLoading"
+        class="rounded-xl border border-zinc-700 p-4"
+        @busy="consoleCreating = $event"
+      />
+
       <!-- without metadata option -->
       <div>
         <LoadingButton
           class="w-fit"
           :loading="importLoading"
+          :disabled="importLoading || consoleCreating"
           @click="() => importGame_wrapper(false)"
         >
           {{ $t("library.admin.import.withoutMetadata") }}
@@ -323,7 +332,11 @@
           <LoadingButton
             class="w-fit"
             :loading="importLoading"
-            :disabled="currentlySelectedMetadata === -1"
+            :disabled="
+              currentlySelectedMetadata === -1 ||
+              importLoading ||
+              consoleCreating
+            "
             @click="() => importGame_wrapper()"
           >
             {{ $t("library.admin.import.import") }}
@@ -456,7 +469,10 @@ const importMode = ref<GameType>(
   useRoute().query.type === "Emulator" ? "Emulator" : "Game",
 );
 const isEmulated = ref(false);
+const consoleTypeId = ref<string | null>(null);
+const consoleCreating = ref(false);
 async function importGame(useMetadata: boolean) {
+  if (consoleCreating.value) return;
   if (!metadataResults.value && useMetadata) return;
 
   const metadata =
@@ -473,6 +489,10 @@ async function importGame(useMetadata: boolean) {
       metadata,
       type: importMode.value,
       isEmulated: importMode.value === "Game" && isEmulated.value,
+      consoleTypeId:
+        importMode.value === "Game" && isEmulated.value
+          ? consoleTypeId.value
+          : null,
     },
   });
 

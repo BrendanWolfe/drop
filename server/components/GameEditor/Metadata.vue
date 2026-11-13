@@ -140,6 +140,14 @@
           </div>
         </div>
 
+        <GameEditorConsole
+          v-if="game.type === 'Game' && game.isEmulated"
+          :key="game.id"
+          v-model="game.consoleTypeId"
+          :game-id="game.id"
+          class="mt-6"
+        />
+
         <!-- image carousel pick -->
         <div class="border-b border-zinc-700">
           <div class="border-b border-zinc-700 py-4">

@@ -27,10 +27,17 @@ pub mod v1 {
         #[serde(default)]
         pub configuration: UserConfiguration,
         pub contexts: Mutex<HashMap<String, bool>>,
+        // Legacy files may contain this field. New checkpoints never persist it.
+        #[serde(default, skip_serializing)]
         pub base_path: PathBuf,
         pub previously_installed_version: Option<String>,
         #[serde(default)]
         pub emulator: bool,
+        /// Portable launch metadata; discovery never fetches this from the server.
+        #[serde(default)]
+        pub installed_version: Option<database::GameVersion>,
+        #[serde(default)]
+        pub setup_completed: Option<bool>,
     }
 
     impl DropData {
@@ -51,6 +58,8 @@ pub mod v1 {
                 configuration,
                 previously_installed_version,
                 emulator: false,
+                installed_version: None,
+                setup_completed: None,
             }
         }
     }
@@ -92,19 +101,46 @@ impl DropData {
         }
     }
     pub fn read(base_path: &Path) -> Result<Self, io::Error> {
+        if !std::fs::symlink_metadata(base_path.join(DROPDATA_PATH))?.is_file() {
+            return Err(io::Error::other("Drop data must be a regular file"));
+        }
         let mut file = File::open(base_path.join(DROPDATA_PATH))?;
 
         let mut s = Vec::new();
         file.read_to_end(&mut s)?;
 
-        pot::from_slice(&s).map_err(|e| {
+        let mut data: Self = pot::from_slice(&s).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("Failed to decode drop data: {e}"),
             )
-        })
+        })?;
+        // The containing directory is authoritative, including for old files
+        // whose serialized base_path still points at another disk/library.
+        data.base_path = base_path.to_path_buf();
+        Ok(data)
     }
     pub fn write(&self) {
+        if !std::fs::symlink_metadata(&self.base_path).is_ok_and(|metadata| metadata.is_dir()) {
+            error!("Refusing to write drop data outside an installation directory");
+            return;
+        }
+        for name in [DROPDATA_PATH.to_owned(), format!("{DROPDATA_PATH}.tmp")] {
+            if let Ok(metadata) = std::fs::symlink_metadata(self.base_path.join(name)) {
+                if !metadata.is_file() {
+                    error!("Refusing to overwrite linked or non-file drop data");
+                    return;
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    if metadata.nlink() > 1 {
+                        error!("Refusing to overwrite hard-linked drop data");
+                        return;
+                    }
+                }
+            }
+        }
         let manifest_raw = match pot::to_vec(&self) {
             Ok(data) => data,
             Err(_) => return,
@@ -194,5 +230,67 @@ mod tests {
 
         let resumed = DropData::read(directory.path()).unwrap();
         assert_eq!(resumed.get_contexts().get("first"), Some(&true));
+    }
+
+    #[test]
+    fn moved_installation_uses_its_actual_directory_and_preserves_checkpoints() {
+        let old = tempfile::tempdir().unwrap();
+        let new = tempfile::tempdir().unwrap();
+        let data = DropData::new(
+            "game".into(),
+            "version".into(),
+            Platform::Linux,
+            old.path().to_path_buf(),
+            UserConfiguration::default(),
+            None,
+        );
+        data.set_context("chunk".into(), true);
+        #[derive(serde::Serialize)]
+        struct LegacyData<'a> {
+            game_id: &'a str,
+            game_version: &'a str,
+            target_platform: Platform,
+            configuration: &'a UserConfiguration,
+            contexts: HashMap<String, bool>,
+            base_path: &'a Path,
+            previously_installed_version: Option<String>,
+        }
+        let legacy = LegacyData {
+            game_id: &data.game_id,
+            game_version: &data.game_version,
+            target_platform: data.target_platform,
+            configuration: &data.configuration,
+            contexts: data.get_contexts(),
+            base_path: old.path(),
+            previously_installed_version: None,
+        };
+        std::fs::write(
+            old.path().join(DROPDATA_PATH),
+            pot::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        std::fs::rename(
+            old.path().join(DROPDATA_PATH),
+            new.path().join(DROPDATA_PATH),
+        )
+        .unwrap();
+        let resumed = DropData::generate(
+            "game".into(),
+            "version".into(),
+            Platform::Linux,
+            new.path().to_path_buf(),
+            UserConfiguration::default(),
+        );
+        assert_eq!(resumed.base_path, new.path());
+        assert_eq!(resumed.get_contexts().get("chunk"), Some(&true));
+        resumed.write();
+        assert!(new.path().join(DROPDATA_PATH).exists());
+        assert!(!old.path().join(DROPDATA_PATH).exists());
+        let encoded = pot::to_vec(&resumed).unwrap();
+        assert!(
+            !encoded
+                .windows(old.path().as_os_str().len())
+                .any(|bytes| bytes == old.path().to_string_lossy().as_bytes())
+        );
     }
 }

@@ -85,12 +85,16 @@
                     <DisclosurePanel class="pt-6">
                       <div
                         v-if="section.options.length <= 10"
-                        class="gap-3 grid grid-cols-2"
+                        :class="
+                          section.param === 'emulated'
+                            ? 'space-y-4'
+                            : 'gap-3 grid grid-cols-2'
+                        "
                       >
                         <div
                           v-for="(option, optionIdx) in section.options"
                           :key="option.param"
-                          class="flex gap-3"
+                          class="flex flex-wrap gap-3"
                         >
                           <div class="flex h-5 shrink-0 items-center">
                             <div class="group grid size-4 grid-cols-1">
@@ -125,6 +129,16 @@
                             class="min-w-0 flex-1 text-zinc-400"
                             >{{ option.name }}</label
                           >
+                          <StoreConsoleFilters
+                            v-if="
+                              section.param === 'emulated' &&
+                              option.param === 'true' &&
+                              emulatedSelected &&
+                              consoles.length
+                            "
+                            v-model="consoleValues"
+                            :consoles="consoles"
+                          />
                         </div>
                       </div>
                       <SelectorMultiItem
@@ -294,7 +308,7 @@
                     <div
                       v-for="(option, optionIdx) in section.options"
                       :key="option.param"
-                      class="flex gap-3"
+                      class="flex flex-wrap gap-3"
                     >
                       <div class="flex h-5 shrink-0 items-center">
                         <div class="group grid size-4 grid-cols-1">
@@ -321,9 +335,19 @@
                       </div>
                       <label
                         :for="`filter-${section.param}-${optionIdx}`"
-                        class="text-sm text-zinc-400"
+                        class="min-w-0 flex-1 text-sm text-zinc-400"
                         >{{ option.name }}</label
                       >
+                      <StoreConsoleFilters
+                        v-if="
+                          section.param === 'emulated' &&
+                          option.param === 'true' &&
+                          emulatedSelected &&
+                          consoles.length
+                        "
+                        v-model="consoleValues"
+                        :consoles="consoles"
+                      />
                     </div>
                   </div>
                   <SelectorMultiItem
@@ -445,6 +469,8 @@ const props = defineProps<{
 
 const tags =
   await $dropFetch<Array<SerializeObject<GameTagModel>>>("/api/v1/store/tags");
+const consoles = await $dropFetch("/api/v1/store/consoles");
+const consoleValues = ref<Record<string, boolean | undefined>>({});
 
 const sorts: Array<StoreSortOption> = [
   {
@@ -507,6 +533,14 @@ const optionValues = ref<{
   ),
 );
 Object.assign(optionValues.value, props.prefilled);
+const emulatedSelected = computed(() => {
+  const value = optionValues.value.emulated;
+  return typeof value === "object" && value?.true === true;
+});
+
+watch(emulatedSelected, (selected) => {
+  if (!selected) consoleValues.value = {};
+});
 
 const filterQuery = computed(() => {
   const query = Object.entries(optionValues.value)
@@ -516,21 +550,29 @@ const filterQuery = computed(() => {
         (typeof v !== "object" || Object.values(v).filter((e) => e).length > 0),
     )
     .map(([n, v]) => {
-      if (typeof v === "string") return [`${n}=${v}`];
+      if (typeof v === "string")
+        return `${encodeURIComponent(n)}=${encodeURIComponent(v)}`;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const enabledOptions = Object.entries(v as any).filter(([_, e]) => e);
-      return `${n}=${enabledOptions.map(([k, _]) => k).join(",")}`;
+      return `${encodeURIComponent(n)}=${encodeURIComponent(enabledOptions.map(([k, _]) => k).join(","))}`;
     })
     .join("&");
   const extraFilters = props.params
     ? Object.entries(props.params)
-        .map(([k, v]) => `${k}=${v}`)
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
         .join("&")
     : props.params;
   return [
     query,
     extraFilters,
     searchQuery.value ? `q=${encodeURIComponent(searchQuery.value)}` : "",
+    emulatedSelected.value && Object.values(consoleValues.value).some(Boolean)
+      ? `consoles=${encodeURIComponent(
+          Object.keys(consoleValues.value)
+            .filter((id) => consoleValues.value[id])
+            .join(","),
+        )}`
+      : "",
   ]
     .filter(Boolean)
     .join("&");

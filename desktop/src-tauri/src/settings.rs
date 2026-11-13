@@ -62,6 +62,7 @@ pub fn add_download_dir(
     new_dir: PathBuf,
     allow_non_empty: bool,
     kind: Option<InstallLocationKind>,
+    app: tauri::AppHandle,
 ) -> Result<(), DownloadManagerError<()>> {
     // Check the new directory is all good
     let new_dir_path = Path::new(&new_dir);
@@ -85,7 +86,27 @@ pub fn add_download_dir(
         .map_err(|message| Error::new(ErrorKind::AlreadyExists, message))?;
     drop(lock);
 
-    scan_install_dirs();
+    let recovered = scan_install_dirs();
+    let db = database::borrow_db_checked();
+    for id in recovered {
+        let version = db
+            .applications
+            .installed_game_version
+            .get(&id)
+            .and_then(|meta| db.applications.game_versions.get(&meta.version))
+            .cloned();
+        utils::app_emit!(
+            &app,
+            &format!("update_game/{id}"),
+            games::library::GameUpdateEvent {
+                game_id: id.clone(),
+                version,
+                status: games::state::GameStatusManager::fetch_state(&id, &db),
+            }
+        );
+    }
+    drop(db);
+    utils::app_emit!(&app, "update_library", ());
 
     Ok(())
 }

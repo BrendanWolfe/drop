@@ -36,6 +36,18 @@ export function setupHooks() {
     );
   });
 
+  listen("integrity_complete", () => {
+    createModal(
+      ModalType.Notification,
+      {
+        title: "File integrity verified",
+        description: "Verification finished. Any missing or corrupt game data was repaired.",
+        buttonText: "Close",
+      },
+      (e, c) => c(),
+    );
+  });
+
   // This is for errors that (we think) aren't our fault
   listen("launch_external_error", (event) => {
     createModal(

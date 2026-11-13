@@ -26,12 +26,12 @@
       >
         <div
           v-if="!isPaused"
-          class="absolute inset-0 flex items-end justify-end gap-px px-2 pt-2"
+          class="absolute inset-0 flex items-end gap-[0.1%] pt-2"
         >
           <div
             v-for="(bar, index) in speedHistory"
             :key="index"
-            class="w-[3px] shrink-0 rounded-t bg-blue-500"
+            class="min-w-0 flex-1 rounded-t bg-blue-500"
             :style="{ height: `${(bar / speedMax) * 100}%` }"
           />
         </div>
@@ -43,16 +43,17 @@
         <button
           type="button"
           @click="toggleDownloads"
-          :disabled="downloadControlPending"
+          :disabled="queueBusy"
           :aria-busy="downloadControlPending"
-          class="inline-flex min-h-10 items-center gap-2 rounded-md bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-sm hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 disabled:cursor-wait disabled:opacity-50"
+          :aria-label="downloadControlLabel"
+          :title="downloadControlLabel"
+          class="inline-flex size-10 items-center justify-center rounded-md bg-zinc-100 text-zinc-950 shadow-sm hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 disabled:cursor-wait disabled:opacity-50"
         >
           <PauseIcon
             v-if="!isPaused"
             class="size-4"
             aria-hidden="true"
           /><PlayIcon v-else class="size-4" aria-hidden="true" />
-          {{ downloadControlLabel }}
         </button>
       </div>
     </div>
@@ -85,7 +86,7 @@
         :sort="false"
         :disabled="queueBusy"
         data-slot="active"
-        class="min-h-36 rounded-xl bg-blue-500/5 p-2 ring-1 ring-inset ring-blue-400/20"
+        class="min-h-24"
         ghost-class="opacity-30"
         @start="onDragStart"
         @end="onDragEnd"
@@ -167,6 +168,78 @@
       </draggable>
     </section>
 
+    <section
+      aria-labelledby="pending-heading"
+      class="border-t border-zinc-800 pt-5"
+    >
+      <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <h2
+          id="pending-heading"
+          class="font-display text-sm font-semibold text-zinc-300"
+        >
+          Updates &amp; incomplete installs
+          <span class="ml-2 tabular-nums text-zinc-500">{{
+            availablePendingItems.length
+          }}</span>
+        </h2>
+        <span class="text-xs text-zinc-500"
+          >Drag to Up next or Active download</span
+        >
+      </div>
+      <p v-if="pendingError" role="alert" class="mb-3 text-sm text-red-200">
+        {{ pendingError }}
+        <button
+          type="button"
+          class="ml-2 inline-flex min-h-10 items-center rounded px-2 underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+          @click="refreshPendingDownloads"
+        >
+          Retry
+        </button>
+      </p>
+      <draggable
+        v-model="pendingItems"
+        item-key="key"
+        :group="{ name: 'downloads', pull: true, put: false }"
+        handle=".download-handle"
+        :sort="false"
+        :disabled="queueBusy"
+        data-slot="pending"
+        class="min-h-24 space-y-2"
+        ghost-class="opacity-30"
+        @start="onDragStart"
+        @end="onDragEnd"
+      >
+        <template #item="{ element }">
+          <DownloadQueueCard
+            :item="element"
+            :title="element.name"
+            :cover="
+              element.coverObjectId
+                ? useObject(element.coverObjectId)
+                : undefined
+            "
+            pending
+            :disabled="queueBusy"
+            @enqueue="requestPendingDownload(element)"
+            @activate="requestPendingDownload(element, 0)"
+          />
+        </template>
+        <template #footer>
+          <p
+            v-if="!availablePendingItems.length && !pendingError"
+            role="status"
+            class="rounded-lg border border-dashed border-zinc-800 px-4 py-8 text-center text-sm text-zinc-500"
+          >
+            {{
+              pendingLoading
+                ? "Checking installed games…"
+                : "No updates or incomplete installs waiting."
+            }}
+          </p>
+        </template>
+      </draggable>
+    </section>
+
     <ModalTemplate
       :model-value="!!pendingSwitch"
       @update:model-value="if (!$event) pendingSwitch = undefined;"
@@ -176,7 +249,9 @@
           >Switch active download?</DialogTitle
         >
         <p class="mt-3 text-sm leading-6 text-zinc-400">
-          Move “{{ pendingSwitch ? title(pendingSwitch.meta) : "" }}”
+          {{ pendingSwitch?.candidate ? "Add" : "Move" }} “{{
+            pendingSwitch ? title(pendingSwitch.meta) : ""
+          }}”
           {{
             pendingSwitch?.newIndex === 0
               ? "into the active slot"
@@ -186,6 +261,11 @@
             isPaused
               ? "Downloads will remain paused."
               : "The new active download will start now."
+          }}
+          {{
+            pendingSwitch?.candidate
+              ? "Any required emulators will download first."
+              : ""
           }}
         </p>
       </template>
@@ -212,9 +292,16 @@
 <script setup lang="ts">
 import { PauseIcon, PlayIcon } from "@heroicons/vue/20/solid";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { DialogTitle } from "@headlessui/vue";
 import type { DownloadableMetadata, Game } from "~/types";
 import { downloadKey, queueMove } from "~/utils/download-queue";
+import {
+  addPendingDownload,
+  pendingDownloadItems,
+  pendingDropIndex,
+  type PendingDownload,
+} from "~/utils/pending-downloads";
 
 const queue = useQueueState();
 const stats = useStatsState();
@@ -242,7 +329,7 @@ const downloadControlLabel = computed(() =>
 );
 
 async function toggleDownloads() {
-  if (downloadControlPending.value) return;
+  if (queueBusy.value) return;
   downloadControlPending.value = true;
   downloadControlError.value = undefined;
   const paused = isPaused.value;
@@ -280,9 +367,73 @@ const pendingSwitch = ref<{
   meta: DownloadableMetadata;
   newIndex: number;
   front: DownloadableMetadata;
+  candidate?: PendingDownload;
 }>();
-const queueBusy = computed(() => saving.value || !!pendingSwitch.value);
+const queueBusy = computed(
+  () => saving.value || downloadControlPending.value || !!pendingSwitch.value,
+);
 let dragFront: DownloadableMetadata | undefined;
+let dragPending: PendingDownload | undefined;
+
+const pendingDownloads = ref<PendingDownload[]>([]);
+const pendingLoading = ref(true);
+const pendingError = ref<string>();
+const availablePendingItems = computed(() =>
+  pendingDownloadItems(pendingDownloads.value, queue.value.queue),
+);
+const pendingItems = ref<ReturnType<typeof pendingDownloadItems>>([]);
+function syncPending() {
+  pendingItems.value = [...availablePendingItems.value];
+}
+watch(
+  availablePendingItems,
+  () => {
+    if (!dragging.value) syncPending();
+  },
+  { immediate: true },
+);
+
+let pendingRequest: Promise<void> | undefined;
+function refreshPendingDownloads() {
+  if (pendingRequest) return pendingRequest;
+  pendingLoading.value = true;
+  pendingRequest = invoke<PendingDownload[]>("fetch_pending_downloads")
+    .then((items) => {
+      pendingDownloads.value = items;
+      pendingError.value = undefined;
+    })
+    .catch((error) => {
+      pendingError.value = `Could not check installed games: ${error}`;
+    })
+    .finally(() => {
+      pendingLoading.value = false;
+      pendingRequest = undefined;
+    });
+  return pendingRequest;
+}
+let pendingTimer: ReturnType<typeof setInterval> | undefined;
+let unlistenLibrary: (() => void) | undefined;
+let disposed = false;
+onMounted(() => {
+  void refreshPendingDownloads();
+  // The update scheduler changes installed flags without publishing game events.
+  pendingTimer = setInterval(() => void refreshPendingDownloads(), 15_000);
+  void listen("update_library", () => void refreshPendingDownloads())
+    .then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenLibrary = unlisten;
+    })
+    .catch(controlError);
+});
+onUnmounted(() => {
+  disposed = true;
+  clearInterval(pendingTimer);
+  unlistenLibrary?.();
+});
+watch(
+  () => queue.value.queue.map((item) => downloadKey(item.meta)).join("|"),
+  () => void refreshPendingDownloads(),
+);
 
 function syncQueue() {
   const items = queue.value.queue.map((item) => ({
@@ -292,9 +443,12 @@ function syncQueue() {
   activeItems.value = items.slice(0, 1);
   waitingItems.value = items.slice(1);
 }
-function onDragStart() {
+function onDragStart(event: { item: HTMLElement }) {
   dragging.value = true;
   dragFront = queue.value.queue[0]?.meta;
+  dragPending = availablePendingItems.value.find(
+    (item) => item.key === event.item.dataset.downloadKey,
+  );
 }
 function onDragEnd(event: {
   item: HTMLElement;
@@ -302,6 +456,13 @@ function onDragEnd(event: {
   newIndex?: number;
 }) {
   dragging.value = false;
+  const candidate = dragPending;
+  dragPending = undefined;
+  const pendingIndex = pendingDropIndex(
+    event.to.dataset.slot ?? "",
+    event.newIndex ?? -1,
+    queue.value.queue.length,
+  );
   const move = queueMove(
     queue.value.queue,
     event.item.dataset.downloadKey ?? "",
@@ -309,16 +470,62 @@ function onDragEnd(event: {
     event.newIndex ?? -1,
   );
   syncQueue();
+  syncPending();
   if (
-    !dragFront ||
-    downloadKey(queue.value.queue[0]?.meta ?? dragFront) !==
-      downloadKey(dragFront)
+    (queue.value.queue[0]?.meta
+      ? downloadKey(queue.value.queue[0].meta)
+      : undefined) !== (dragFront ? downloadKey(dragFront) : undefined)
   ) {
     downloadControlError.value =
       "The active download changed while dragging. Please try again.";
     return;
   }
+  if (candidate) {
+    if (pendingIndex !== undefined)
+      requestPendingDownload(candidate, pendingIndex);
+    return;
+  }
   if (move) requestMove(move.meta, move.newIndex);
+}
+function requestPendingDownload(candidate: PendingDownload, newIndex?: number) {
+  if (
+    queueBusy.value ||
+    !availablePendingItems.value.some(
+      (item) => item.key === downloadKey(candidate.meta),
+    )
+  )
+    return;
+  const front = queue.value.queue[0]?.meta;
+  if (newIndex === 0 && front) {
+    pendingSwitch.value = { meta: candidate.meta, newIndex, front, candidate };
+  } else {
+    void savePendingDownload(candidate, newIndex);
+  }
+}
+
+async function savePendingDownload(
+  candidate: PendingDownload,
+  newIndex?: number,
+) {
+  saving.value = true;
+  downloadControlError.value = undefined;
+  try {
+    await addPendingDownload(candidate, newIndex, {
+      readQueue: () => queue.value.queue,
+      enqueue: (meta) =>
+        invoke<DownloadableMetadata[]>("queue_pending_download", { meta }),
+      wait: waitForQueue,
+      move: (meta, newIndex, expectedFront) =>
+        invoke("move_queued_download", { meta, newIndex, expectedFront }),
+    });
+  } catch (error) {
+    controlError(error);
+  } finally {
+    saving.value = false;
+    syncQueue();
+    await refreshPendingDownloads();
+    syncPending();
+  }
 }
 function moveWaiting(meta: DownloadableMetadata, direction: number) {
   const index = queue.value.queue.findIndex(
@@ -356,7 +563,9 @@ async function confirmSwitch() {
       "The active download changed. Please choose a download again.";
     return;
   }
-  await saveMove(change.meta, change.newIndex, change.front);
+  if (change.candidate)
+    await savePendingDownload(change.candidate, change.newIndex);
+  else await saveMove(change.meta, change.newIndex, change.front);
 }
 async function saveMove(
   meta: DownloadableMetadata,
@@ -409,7 +618,11 @@ const games = ref<Record<string, { game: Game; cover: string }>>({});
 const metadataErrors = ref<Record<string, boolean>>({});
 const loadingMetadata = new Set<string>();
 function title(meta: DownloadableMetadata) {
-  return games.value[meta.id]?.game.mName ?? meta.id;
+  return (
+    games.value[meta.id]?.game.mName ??
+    pendingDownloads.value.find((item) => item.meta.id === meta.id)?.name ??
+    meta.id
+  );
 }
 function loadGames() {
   for (const {

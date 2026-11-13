@@ -27,6 +27,9 @@ impl DatabaseApplications {
     }
 
     pub fn record_installation(&mut self, meta: &DownloadableMetadata, status: GameDownloadStatus) {
+        if let GameDownloadStatus::Installed { install_dir, .. } = &status {
+            self.bind_install_path(meta, std::path::Path::new(install_dir));
+        }
         if meta.download_type == DownloadType::Emulator {
             self.emulator_installations.insert(
                 build_key(&meta.id, &meta.version, meta.target_platform),

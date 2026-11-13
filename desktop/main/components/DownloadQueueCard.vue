@@ -7,6 +7,7 @@
       type="button"
       class="download-handle flex min-h-10 min-w-10 cursor-grab items-center justify-center rounded text-zinc-500 hover:bg-zinc-800 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 active:cursor-grabbing"
       :aria-label="`Drag ${title} to reorder`"
+      :disabled="disabled"
     >
       <Bars3Icon class="size-5" aria-hidden="true" />
     </button>
@@ -85,7 +86,29 @@
       </div>
     </div>
     <div class="flex items-center gap-1">
-      <template v-if="!active">
+      <template v-if="pending">
+        <button
+          type="button"
+          :disabled="disabled"
+          @click="$emit('enqueue')"
+          class="flex size-10 items-center justify-center rounded text-zinc-300 transition-transform hover:bg-zinc-800 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 active:scale-[0.96] disabled:opacity-30"
+          :aria-label="`Add ${title} to queue`"
+          title="Add to queue"
+        >
+          <QueueListIcon class="size-5" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          :disabled="disabled"
+          @click="$emit('activate')"
+          class="flex size-10 items-center justify-center rounded text-zinc-300 transition-transform hover:bg-zinc-800 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 active:scale-[0.96] disabled:opacity-30"
+          :aria-label="`Download ${title} now`"
+          title="Download now"
+        >
+          <PlayIcon class="size-5" aria-hidden="true" />
+        </button>
+      </template>
+      <template v-else-if="!active">
         <button
           type="button"
           :disabled="disabled"
@@ -116,6 +139,7 @@
         </button>
       </template>
       <button
+        v-if="!pending"
         type="button"
         :disabled="disabled"
         @click="$emit('cancel')"
@@ -135,6 +159,7 @@ import {
   ArrowUpIcon,
   Bars3Icon,
   PlayIcon,
+  QueueListIcon,
   XMarkIcon,
 } from "@heroicons/vue/20/solid";
 import type { QueueState } from "~/composables/downloads";
@@ -146,12 +171,18 @@ const props = defineProps<{
   cover?: string;
   active?: boolean;
   paused?: boolean;
+  pending?: boolean;
   metadataError?: boolean;
   disabled?: boolean;
   first?: boolean;
   last?: boolean;
 }>();
-defineEmits<{ activate: []; move: [direction: number]; cancel: [] }>();
+defineEmits<{
+  activate: [];
+  enqueue: [];
+  move: [direction: number];
+  cancel: [];
+}>();
 const href = computed(() =>
   props.item.meta.downloadType === "Emulator"
     ? "/emulators"

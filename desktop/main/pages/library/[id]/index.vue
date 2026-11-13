@@ -81,6 +81,8 @@
             @open-folder="() => openGameFolder()"
             @resume="() => resumeDownload()"
             @update="repairEmulators"
+            @verify="integrityOpen = true"
+            :show-verify="game.type !== 'Emulator'"
             :requires-update="
               missingEmulators.length > 0 || Boolean(dependencyCheckError)
             "
@@ -253,6 +255,13 @@
     v-if="emulatorToUninstall && emulatorUninstallOpen"
     v-model="emulatorUninstallOpen"
     :emulator="emulatorToUninstall"
+  />
+
+  <FileIntegrityModal
+    v-if="integrityOpen"
+    v-model="integrityOpen"
+    :game-id="game.id"
+    :name="game.mName"
   />
 
   <ModalTemplate v-model="installFlowOpen">
@@ -1034,6 +1043,8 @@ function formatVersionOptionText(index: number) {
   }
   return template;
 }
+
+const integrityOpen = ref(false);
 
 async function resumeDownload() {
   try {

@@ -79,6 +79,7 @@ impl DatabaseApplications {
             return Err("This location is already in the list.".into());
         }
         self.install_directories_mut(kind).push(path);
+        self.register_install_locations();
         Ok(())
     }
 
@@ -110,6 +111,22 @@ impl DatabaseApplications {
         }
         if directories.len() <= 1 {
             return Err("Keep at least one installation location.".into());
+        }
+        let root = &directories[index];
+        let in_use = self
+            .installed_game_version
+            .values()
+            .chain(
+                self.emulator_installations
+                    .values()
+                    .map(|item| &item.metadata),
+            )
+            .any(|meta| {
+                self.resolve_install_path(meta)
+                    .is_ok_and(|path| path.starts_with(root))
+            });
+        if in_use {
+            return Err("This location still has registered installations. Move or uninstall them before removing it.".into());
         }
         let default = directories[self.default_install_index(kind).unwrap()].clone();
         let directories = self.install_directories_mut(kind);

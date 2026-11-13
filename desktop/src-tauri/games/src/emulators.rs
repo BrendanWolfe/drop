@@ -59,7 +59,6 @@ pub fn emulator_install_path(
     let GameDownloadStatus::Installed {
         install_type: InstalledGameType::Installed,
         version_id: installed_version,
-        install_dir,
         ..
     } = status
     else {
@@ -68,7 +67,8 @@ pub fn emulator_install_path(
     if installed_version != version_id {
         return None;
     }
-    if !std::path::Path::new(install_dir).is_dir() {
+    let install_dir = db.applications.resolve_install_path(meta).ok()?.to_string_lossy().into_owned();
+    if !std::path::Path::new(&install_dir).is_dir() {
         return None;
     }
     let version = db.applications.game_versions.get(version_id)?;
@@ -318,10 +318,10 @@ pub fn begin_emulator_uninstall(
         .emulator_installation(id, version, platform)
         .ok_or("This emulator build is no longer installed. Refresh and try again.")?;
     let meta = installation.metadata.clone();
-    let GameDownloadStatus::Installed { install_dir, .. } = &installation.status else {
+    let GameDownloadStatus::Installed { .. } = &installation.status else {
         return Err("This build is not installed.".into());
     };
-    let path = std::path::PathBuf::from(install_dir);
+    let path = db.applications.resolve_install_path(&meta)?;
     if !uninstall_confirmed(&required_by(db, &meta), Some(confirmed)) {
         return Err("The games using this build changed. Refresh and confirm again.".into());
     }
@@ -331,6 +331,7 @@ pub fn begin_emulator_uninstall(
         );
     }
     safe_emulator_removal(db, &meta, &path)?;
+    crate::library::validate_managed_directory(db, &meta, &path)?;
     db.applications
         .transient_statuses
         .insert(meta.clone(), ApplicationTransientStatus::Uninstalling {});
@@ -376,6 +377,10 @@ mod tests {
         db.applications.game_versions.insert(version.into(), version_data);
         let meta = DownloadableMetadata::new(id.into(), version.into(), platform, if id == "emu" { DownloadType::Emulator } else { DownloadType::Game });
         db.applications.record_installation(&meta, GameDownloadStatus::Installed { install_type: InstalledGameType::Installed, install_dir: path.to_string_lossy().into_owned(), version_id: version.into(), update_available: false });
+        if path.is_dir() {
+            crate::downloads::drop_data::DropData::new(id.into(), version.into(), platform,
+                path.to_path_buf(), Default::default(), None).write();
+        }
         meta
     }
 
@@ -522,7 +527,9 @@ mod tests {
     fn failed_uninstall_is_resumable_and_never_reused_as_a_complete_build() {
         let root = tempfile::tempdir().unwrap();
         let mut db = Database::new(root.path(), None, root.path().join("cache"));
-        let meta = add_install(&mut db, "emu", "v1", Platform::Linux, root.path(), None);
+        let path = root.path().join("emulator-v1");
+        std::fs::create_dir(&path).unwrap();
+        let meta = add_install(&mut db, "emu", "v1", Platform::Linux, &path, None);
         let (reserved, _) = begin_emulator_uninstall(&mut db, "emu", "v1", Platform::Linux, &[]).unwrap();
         finish_emulator_uninstall(&mut db, &reserved, false);
         assert!(db.applications.emulator_installation("emu", "v1", Platform::Linux).is_some());

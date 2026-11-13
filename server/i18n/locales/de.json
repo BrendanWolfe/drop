@@ -551,7 +551,7 @@
         "dropGameAltPlaceholder": "Beispiel Spielsymbol",
         "dropGameDescriptionPlaceholder": "Dies ist ein exemplarisches Spiel. Es wird ersetzt wenn du ein Spiel importierst.",
         "dropGameNamePlaceholder": "Beispielspiel",
-        "showGamePanelTextDecoration": "Zeige Titel und Beschreibung auf den Spielkacheln (Standard: an)",
+        "showGamePanelTextDecoration": "Zeige Titel auf den Spielkacheln (Standard: an)",
         "title": "Store"
       },
       "title": "Einstellungen"

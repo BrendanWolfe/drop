@@ -527,7 +527,7 @@
         "dropGameAltPlaceholder": "Przykładowa ikonka Gry",
         "dropGameDescriptionPlaceholder": "To przykładowa gra. Będzie zastąpiona kiedy zaimportujesz grę.",
         "dropGameNamePlaceholder": "Przykładowa Gra",
-        "showGamePanelTextDecoration": "Pokaż tytuł i opis na kafelkach gry (domyślnie: włączone)",
+        "showGamePanelTextDecoration": "Pokaż tytuł na kafelkach gry (domyślnie: włączone)",
         "title": "Sklep"
       },
       "title": "Ustawienia"

@@ -4,6 +4,7 @@ pub mod extract;
 pub mod server_archive;
 mod download_logic;
 pub mod drop_data;
+pub mod integrity;
 pub mod error;
 mod limiter;
 mod install_path;

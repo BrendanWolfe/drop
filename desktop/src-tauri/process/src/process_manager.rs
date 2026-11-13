@@ -14,7 +14,10 @@ use database::{
     borrow_db_checked, borrow_db_mut_checked, db::DATA_ROOT_DIR, models::data::InstalledGameType,
     platform::Platform,
 };
-use games::{library::{push_game_update, report_playtime}, state::GameStatusManager};
+use games::{
+    library::{push_game_update, report_playtime},
+    state::GameStatusManager,
+};
 use log::{debug, info, warn};
 use serde::Serialize;
 use shared_child::SharedChild;
@@ -175,6 +178,22 @@ impl ProcessManager<'_> {
             && exit_code.success()
         {
             *install_type = InstalledGameType::Installed;
+            if let Ok(path) = db_handle.applications.resolve_install_path(&meta) {
+                if let Ok(mut data) = games::downloads::drop_data::DropData::read(&path) {
+                    if data.game_id == meta.id
+                        && data.game_version == meta.version
+                        && data.target_platform == meta.target_platform
+                    {
+                        data.setup_completed = Some(true);
+                        data.installed_version = db_handle
+                            .applications
+                            .game_versions
+                            .get(&meta.version)
+                            .cloned();
+                        data.write();
+                    }
+                }
+            }
         }
 
         let elapsed = process.start.elapsed().unwrap_or(Duration::ZERO);
@@ -270,7 +289,9 @@ impl ProcessManager<'_> {
             {
                 return false;
             }
-            let configuration = db.applications.installed_game_version
+            let configuration = db
+                .applications
+                .installed_game_version
                 .get(game_id)
                 .and_then(|meta| db.applications.game_versions.get(&meta.version))
                 .map(|version| &version.user_configuration);
@@ -372,21 +393,33 @@ impl ProcessManager<'_> {
             .cloned()
             .ok_or(ProcessError::NotInstalled)?;
 
+        if db_lock.applications.transient_statuses.contains_key(&meta) {
+            return Err(ProcessError::InvalidArguments(
+                "Wait for this game's current operation to finish.".into(),
+            ));
+        }
+
         let game_status = db_lock
             .applications
             .game_statuses
             .get(&game_id)
             .ok_or(ProcessError::NotInstalled)?;
 
-        let (version_name, install_dir) = match game_status {
+        let version_name = match game_status {
             GameDownloadStatus::Installed {
                 version_id: version_name,
-                install_dir,
                 install_type: InstalledGameType::Installed | InstalledGameType::SetupRequired,
                 ..
-            } => (version_name, install_dir),
+            } => version_name,
             _ => return Err(ProcessError::NotInstalled),
         };
+        let resolved_install_dir = db_lock
+            .applications
+            .resolve_install_path(&meta)
+            .map_err(ProcessError::InvalidArguments)?
+            .to_string_lossy()
+            .into_owned();
+        let install_dir = &resolved_install_dir;
 
         debug!(
             "Launching process {:?} with version {:?}",
@@ -401,8 +434,11 @@ impl ProcessManager<'_> {
             .ok_or(ProcessError::InvalidVersion)?;
 
         if let Some(local) = db_lock.applications.local_games.get(&game_id)
-            && !local.launcher.as_ref().is_some_and(|path| path.is_file()) {
-            return Err(ProcessError::InvalidArguments("Launcher missing. Choose a new launcher in game settings.".into()));
+            && !local.launcher.as_ref().is_some_and(|path| path.is_file())
+        {
+            return Err(ProcessError::InvalidArguments(
+                "Launcher missing. Choose a new launcher in game settings.".into(),
+            ));
         }
 
         let game_log_folder = &self.get_log_dir(game_id);
@@ -494,14 +530,31 @@ impl ProcessManager<'_> {
                 target_platform,
             );
 
-            let (emulator_metadata, _) = games::emulators::installed_emulator(&db_lock, &emulator.game_id, &emulator.version_id, target_platform).ok_or(err.clone())?;
-            if matches!(db_lock.applications.transient_statuses.get(emulator_metadata), Some(ApplicationTransientStatus::Running { .. })) {
+            let (emulator_metadata, _) = games::emulators::installed_emulator(
+                &db_lock,
+                &emulator.game_id,
+                &emulator.version_id,
+                target_platform,
+            )
+            .ok_or(err.clone())?;
+            if matches!(
+                db_lock
+                    .applications
+                    .transient_statuses
+                    .get(emulator_metadata),
+                Some(ApplicationTransientStatus::Running { .. })
+            ) {
                 return Err(ProcessError::AlreadyRunning);
             }
             let emulator_install_dir = games::emulators::emulator_install_path(
-                &db_lock, &emulator.game_id, &emulator.version_id, target_platform,
-                std::slice::from_ref(&emulator.launch_id), Platform::HOST,
-            ).ok_or(err.clone())?;
+                &db_lock,
+                &emulator.game_id,
+                &emulator.version_id,
+                target_platform,
+                std::slice::from_ref(&emulator.launch_id),
+                Platform::HOST,
+            )
+            .ok_or(err.clone())?;
 
             let emulator_game_version = db_lock
                 .applications
@@ -528,7 +581,10 @@ impl ProcessManager<'_> {
             process_handler = self.fetch_process_handler(
                 &db_lock,
                 &target_platform,
-                emulator_game_version.user_configuration.override_handler.as_deref(),
+                emulator_game_version
+                    .user_configuration
+                    .override_handler
+                    .as_deref(),
             )?;
 
             process_handler.create_launch_process(
@@ -553,23 +609,29 @@ impl ProcessManager<'_> {
             install_dir,
             game_version,
             emulator_working_directory.as_deref().or_else(|| {
-                db_lock.applications.local_games.get(&meta.id)
+                db_lock
+                    .applications
+                    .local_games
+                    .get(&meta.id)
                     .map(|local| local.working_directory.as_path())
             }),
         )?;
         let launch_parameters = resolved.command;
         launch_parameters.ensure_executable()?;
         let launch_working_dir = resolved.working_directory;
-        info!("launching (in {}): {:?}", launch_working_dir.display(), launch_parameters);
+        info!(
+            "launching (in {}): {:?}",
+            launch_working_dir.display(),
+            launch_parameters
+        );
 
         let mut command = {
             let mut command = Command::new(launch_parameters.command);
             command.args(launch_parameters.args);
-            for parts in launch_parameters
-                .env
-                .into_iter()
-                .filter_map(|e| e.split_once('=').map(|(key, value)| (key.to_owned(), value.to_owned())))
-            {
+            for parts in launch_parameters.env.into_iter().filter_map(|e| {
+                e.split_once('=')
+                    .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            }) {
                 command.env(parts.0, parts.1);
             }
             command

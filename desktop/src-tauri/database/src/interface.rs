@@ -112,6 +112,9 @@ impl DatabaseInterface {
     }
 
     pub fn create_at_path(db_path: &Path, database: Database) -> Result<DatabaseInterface, Error> {
+        // Backup errors must prevent a write, not make a readable database look
+        // corrupt to open_at_path's recovery handler.
+        Self::backup_before_path_migration(db_path)?;
         let database = DatabaseVersionSerializable(database);
         let mut database_data = ron::to_string(&database)?.into_bytes();
 
@@ -124,6 +127,35 @@ impl DatabaseInterface {
             data: RwLock::new(database.0),
             path: db_path.to_path_buf(),
         })
+    }
+
+    fn backup_before_path_migration(db_path: &Path) -> Result<(), Error> {
+        use std::io::Write;
+        let backup = db_path.with_extension("db.before-relative-paths");
+        if backup.exists() || !db_path.exists() {
+            return Ok(());
+        }
+        let raw = std::fs::read(db_path)?;
+        let mut plaintext = raw.clone();
+        let (key, iv) = *KEY_IV;
+        let mut cipher = Aes128Ctr64LE::new(&key.into(), &iv.into());
+        cipher.apply_keystream(&mut plaintext);
+        if plaintext.starts_with(b"V0_4_13(") {
+            return Ok(());
+        }
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(backup)
+        {
+            Ok(mut file) => {
+                file.write_all(&raw)?;
+                file.sync_all()?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
+            Err(error) => return Err(error.into()),
+        }
+        Ok(())
     }
 
     pub fn database_is_set_up(&self) -> bool {
@@ -247,5 +279,42 @@ pub fn borrow_db_mut_checked<'a>() -> DBWrite<'a> {
             error!("database borrow mut failed with error {e}");
             panic!("database borrow mut failed with error {e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_relative_path_save_preserves_the_original_encrypted_database() {
+        let root = std::env::temp_dir().join(format!(
+            "drop-path-migration-{:032x}",
+            rand::random::<u128>()
+        ));
+        fs::create_dir(&root).unwrap();
+        let path = root.join("drop.db");
+        let database = Database::new(root.join("games"), None, root.join("cache"));
+        let mut old = ron::to_string(&DatabaseVersionSerializable(database.clone()))
+            .unwrap()
+            .replacen("V0_4_13", "V0_4_0", 1)
+            .into_bytes();
+        let (key, iv) = *KEY_IV;
+        Aes128Ctr64LE::new(&key.into(), &iv.into()).apply_keystream(&mut old);
+        fs::write(&path, &old).unwrap();
+        assert!(DatabaseInterface::open_at_path(&path).unwrap().is_some());
+        let backup = path.with_extension("db.before-relative-paths");
+        assert!(!backup.exists(), "opening a database must remain read-only");
+        DatabaseInterface::create_at_path(&path, database.clone()).unwrap();
+        assert_eq!(fs::read(&backup).unwrap(), old);
+        DatabaseInterface::create_at_path(&path, database).unwrap();
+        assert_eq!(
+            fs::read(&backup).unwrap(),
+            old,
+            "later saves must not replace the backup"
+        );
+        fs::remove_file(backup).unwrap();
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(root).unwrap();
     }
 }

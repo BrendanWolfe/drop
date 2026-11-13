@@ -6,7 +6,9 @@ use database::{
 };
 use log::{debug, error, warn};
 use remote::{
-    auth::generate_authorization_header, error::{DropServerError, RemoteAccessError}, requests::{generate_url, make_authenticated_post},
+    auth::generate_authorization_header,
+    error::{DropServerError, RemoteAccessError},
+    requests::{generate_url, make_authenticated_post},
     utils::DROP_CLIENT_ASYNC,
 };
 use serde::{Deserialize, Serialize};
@@ -90,7 +92,13 @@ pub fn set_partially_installed(
     app_handle: Option<&AppHandle>,
     configuration: UserConfiguration,
 ) {
-    set_partially_installed_db(&mut borrow_db_mut_checked(), meta, install_dir, app_handle, configuration);
+    set_partially_installed_db(
+        &mut borrow_db_mut_checked(),
+        meta,
+        install_dir,
+        app_handle,
+        configuration,
+    );
 }
 
 pub fn set_partially_installed_db(
@@ -112,7 +120,9 @@ pub fn set_partially_installed_db(
     );
 
     if meta.download_type == database::DownloadType::Emulator {
-        if let Some(app_handle) = app_handle { app_emit!(app_handle, "update_library", ()); }
+        if let Some(app_handle) = app_handle {
+            app_emit!(app_handle, "update_library", ());
+        }
         return;
     }
 
@@ -132,6 +142,25 @@ pub fn uninstall_game_logic(meta: DownloadableMetadata, app_handle: &AppHandle) 
     // Imported folders must never enter the server-managed deletion path.
     if db_handle.applications.local_games.contains_key(&meta.id) {
         warn!("refusing server uninstall for a local game");
+        return;
+    }
+    if db_handle
+        .applications
+        .transient_statuses
+        .contains_key(&meta)
+    {
+        warn!("refusing uninstall while an installation is in use");
+        return;
+    }
+    let install_path = match db_handle.applications.resolve_install_path(&meta) {
+        Ok(path) => path,
+        Err(error) => {
+            warn!("{error}");
+            return;
+        }
+    };
+    if let Err(error) = validate_managed_directory(&db_handle, &meta, &install_path) {
+        warn!("refusing unsafe uninstall: {error}");
         return;
     }
     db_handle
@@ -155,15 +184,7 @@ pub fn uninstall_game_logic(meta: DownloadableMetadata, app_handle: &AppHandle) 
         return;
     };
 
-    if let Some((_, install_dir)) = match previous_state {
-        GameDownloadStatus::Installed {
-            install_type: _,
-            version_id: version_name,
-            install_dir,
-            update_available: _,
-        } => Some((version_name, install_dir)),
-        _ => None,
-    } {
+    if matches!(previous_state, GameDownloadStatus::Installed { .. }) {
         db_handle
             .applications
             .transient_statuses
@@ -173,8 +194,18 @@ pub fn uninstall_game_logic(meta: DownloadableMetadata, app_handle: &AppHandle) 
 
         let app_handle = app_handle.clone();
         spawn(move || {
-            if let Err(e) = remove_dir_all(install_dir) {
+            if let Err(e) = remove_dir_all(install_path) {
                 error!("{e}");
+                let mut db = borrow_db_mut_checked();
+                db.applications.transient_statuses.remove(&meta);
+                let version = db.applications.game_versions.get(&meta.version).cloned();
+                push_game_update(
+                    &app_handle,
+                    &meta.id,
+                    version,
+                    GameStatusManager::fetch_state(&meta.id, &db),
+                );
+                return;
             }
             let mut db_handle = borrow_db_mut_checked();
             db_handle.applications.transient_statuses.remove(&meta);
@@ -248,6 +279,15 @@ pub async fn on_game_complete(
         .iter()
         .find(|v| v.platform == meta.target_platform);
 
+    if let Ok(mut data) =
+        crate::downloads::drop_data::DropData::read(std::path::Path::new(&install_dir))
+    {
+        data.installed_version = Some(game_version.clone());
+        data.setup_completed = Some(setup_configuration.is_none());
+        data.configuration = game_version.user_configuration.clone();
+        data.write();
+    }
+
     let status = GameDownloadStatus::Installed {
         version_id: meta.version.clone(),
         install_dir,
@@ -260,7 +300,9 @@ pub async fn on_game_complete(
     };
 
     let mut db_handle = borrow_db_mut_checked();
-    db_handle.applications.record_installation(meta, status.clone());
+    db_handle
+        .applications
+        .record_installation(meta, status.clone());
     db_handle.applications.transient_statuses.remove(meta);
     drop(db_handle);
     if meta.download_type == database::DownloadType::Emulator {
@@ -280,6 +322,40 @@ pub async fn on_game_complete(
     app_emit!(app_handle, "update_library", ());
 
     Ok(())
+}
+
+pub fn validate_managed_directory(
+    db: &Database,
+    meta: &DownloadableMetadata,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    if !std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
+        return Err("Installation root is not a directory.".into());
+    }
+    let data =
+        crate::downloads::drop_data::DropData::read(path).map_err(|error| error.to_string())?;
+    if data.game_id != meta.id
+        || data.game_version != meta.version
+        || data.target_platform != meta.target_platform
+    {
+        return Err("This directory belongs to a different installation.".into());
+    }
+    let resolved = path.canonicalize().map_err(|error| error.to_string())?;
+    if resolved.parent().is_none()
+        || db
+            .applications
+            .install_dirs
+            .iter()
+            .chain(
+                db.applications.install_directories(
+                    database::install_locations::InstallLocationKind::Emulator,
+                ),
+            )
+            .any(|root| root.canonicalize().is_ok_and(|root| root == resolved))
+    {
+        return Err("Refusing to modify an installation location root.".into());
+    }
+    crate::emulators::safe_emulator_removal(db, meta, path)
 }
 
 pub async fn report_playtime(game_id: String, seconds: u64) -> Result<(), RemoteAccessError> {

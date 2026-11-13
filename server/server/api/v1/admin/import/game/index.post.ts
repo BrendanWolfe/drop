@@ -4,12 +4,15 @@ import { readDropValidatedBody, throwingArktype } from "~/server/arktype";
 import aclManager from "~/server/internal/acls";
 import libraryManager from "~/server/internal/library";
 import metadataHandler from "~/server/internal/metadata";
+import prisma from "~/server/internal/db/database";
+import { consoleTypeIdSchema } from "~/server/internal/library/console-types";
 
 const ImportGameBody = type({
   library: "string",
   path: "string",
   type: type.valueOf(GameType),
   isEmulated: "boolean = false",
+  consoleTypeId: consoleTypeIdSchema.default(null),
   ["metadata?"]: {
     id: "string",
     sourceId: "string",
@@ -22,13 +25,27 @@ export default defineEventHandler<{ body: typeof ImportGameBody.infer }>(
     const allowed = await aclManager.allowSystemACL(h3, ["import:game:new"]);
     if (!allowed) throw createError({ statusCode: 403 });
 
-    const { library, path, metadata, type, isEmulated } =
+    const { library, path, metadata, type, isEmulated, consoleTypeId } =
       await readDropValidatedBody(h3, ImportGameBody);
 
     if (isEmulated && type !== GameType.Game)
       throw createError({
         statusCode: 400,
         message: "Only games can be marked as emulated.",
+      });
+
+    if (consoleTypeId && !isEmulated)
+      throw createError({
+        statusCode: 400,
+        message: "Only emulated games can have a console type.",
+      });
+    if (
+      consoleTypeId &&
+      !(await prisma.consoleType.findUnique({ where: { id: consoleTypeId } }))
+    )
+      throw createError({
+        statusCode: 400,
+        message: "Console type not found.",
       });
 
     if (!path)
@@ -51,12 +68,14 @@ export default defineEventHandler<{ body: typeof ImportGameBody.infer }>(
           path,
           type,
           isEmulated,
+          consoleTypeId,
         )
       : await metadataHandler.createGameWithoutMetadata(
           library,
           path,
           type,
           isEmulated,
+          consoleTypeId,
         );
 
     if (!taskId)

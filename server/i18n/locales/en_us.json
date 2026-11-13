@@ -276,6 +276,7 @@
   "emulators": {
     "add": "Add emulator",
     "addConfig": "Add configuration file",
+    "addConsoleType": "Add console",
     "archiveExample": "Library / Emulator name / 1.0.zip",
     "archiveHelp": "Add portable emulator ZIPs to a library, just like game versions. Import the emulator, then import each version and configure its launch command. Include the complete portable program, not an installer.",
     "badge": "Emulated game",
@@ -284,6 +285,11 @@
     "configFiles": "Automatic configuration",
     "configHelp": "Optional first-run templates, created in a private folder for each game. Pass the configuration-directory placeholder in your emulator command to use them. Existing files are preserved. In JSON templates, use a :json placeholder without surrounding quotes for correctly escaped paths.",
     "configPath": "Path inside the configuration folder",
+    "consoleCreateFailed": "Could not create the console type. Try again.",
+    "consolePlaceholder": "e.g. Nintendo GameCube",
+    "consoleSaveFailed": "Could not save the console type. Try again.",
+    "consoleType": "Console type",
+    "consoleUnspecified": "Not specified",
     "description": "Manage portable emulators and their versions. Drop downloads the selected emulator with each game and prepares its launch configuration.",
     "directOpenCommand": "Direct-open command (optional)",
     "directOpenHelp": "Open the emulator GUI without a game. Enter a command relative to the emulator installation folder, with any GUI arguments. Leave blank to hide the desktop button. Only the emulator-directory placeholder is supported; game-specific configuration profiles are not used or changed.",
@@ -298,6 +304,7 @@
     "launchMode": "Launch mode",
     "loadError": "Could not load emulators. Please try again.",
     "manage": "Manage versions and configuration →",
+    "newConsoleType": "Or create a console type",
     "next": "Next",
     "noVersions": "No versions imported yet",
     "pagination": "Emulator pages",
@@ -786,7 +793,7 @@
         "dropGameAltPlaceholder": "Example Game icon",
         "dropGameDescriptionPlaceholder": "This is an example game. It will be replaced if you import a game.",
         "dropGameNamePlaceholder": "Example Game",
-        "showGamePanelTextDecoration": "Show title and description on game tiles (default: on)",
+        "showGamePanelTextDecoration": "Show title on game tiles (default: on)",
         "title": "Store"
       },
       "title": "Settings"

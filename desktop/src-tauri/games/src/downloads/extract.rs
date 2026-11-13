@@ -10,7 +10,7 @@ use libarchive_drop::{
 };
 use std::{
     fs::{self, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -93,7 +93,7 @@ pub fn extract(
             "This folder is not owned by this archive installation",
         ));
     }
-    Ok(extract_into(path, root, None, control, progress)?.is_some())
+    Ok(extract_into(path, root, None, control, progress, false)?.is_some())
 }
 
 /// Server-managed installations are owned by .dropdata, not a local-game marker.
@@ -113,7 +113,7 @@ pub fn extract_managed(
         ));
     }
     let previous_files = super::server_archive::read_inventory(root, id)?;
-    let files = extract_into(path, root, Some(expected_size), control, progress)?;
+    let files = extract_into(path, root, Some(expected_size), control, progress, false)?;
     if let Some(files) = &files {
         // Remove only files recorded by a previous archive install, never saves
         // or unrelated files that happen to live in the game directory.
@@ -142,12 +142,36 @@ pub fn extract_managed(
     Ok(true)
 }
 
+/// Compare extracted bytes with the authenticated archive and overwrite only
+/// mismatching ranges. Do not sweep extras or replay installation setup.
+pub fn verify_managed(
+    path: &Path,
+    root: &Path,
+    id: &str,
+    version: &str,
+    expected_size: u64,
+    control: &DownloadThreadControl,
+    progress: &Arc<ProgressObject>,
+) -> io::Result<bool> {
+    let data = super::drop_data::DropData::read(root)?;
+    if data.game_id != id || data.game_version != version {
+        return Err(invalid("This folder belongs to another installation"));
+    }
+    let Some(files) = extract_into(path, root, Some(expected_size), control, progress, true)?
+    else {
+        return Ok(false);
+    };
+    super::server_archive::write_inventory(root, id, files)?;
+    Ok(true)
+}
+
 fn extract_into(
     path: &Path,
     root: &Path,
     expected_size: Option<u64>,
     control: &DownloadThreadControl,
     progress: &Arc<ProgressObject>,
+    verify: bool,
 ) -> io::Result<Option<Vec<String>>> {
     check_magic(path)?;
     let mut archive = reader(path)?;
@@ -254,11 +278,27 @@ fn extract_into(
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&target)?;
+        let mut existing = if verify {
+            match fs::File::open(&target) {
+                Ok(file) => Some(file),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            }
+        } else {
+            None
+        };
+        let mut file = if verify {
+            None
+        } else {
+            Some(
+                OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&target)?,
+            )
+        };
+        let mut local = vec![0; buffer.len()];
         let mut written = 0u64;
         loop {
             if control.get() == DownloadThreadControlFlag::Stop {
@@ -274,11 +314,42 @@ fn extract_into(
             if written > expected_length {
                 return Err(invalid("Archive entry exceeds its declared size"));
             }
-            file.write_all(&buffer[..length])?;
+            let matches = if let Some(existing) = &mut existing {
+                match existing.read_exact(&mut local[..length]) {
+                    Ok(()) => local[..length] == buffer[..length],
+                    Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => false,
+                    Err(error) => return Err(error),
+                }
+            } else {
+                false
+            };
+            if !verify || !matches {
+                if file.is_none() {
+                    file = Some(
+                        OpenOptions::new()
+                            .create(true)
+                            .write(true)
+                            .truncate(false)
+                            .open(&target)?,
+                    );
+                }
+                let file = file.as_mut().unwrap();
+                file.seek(SeekFrom::Start(written - length as u64))?;
+                file.write_all(&buffer[..length])?;
+            }
             handle.add(length);
         }
         if written != expected_length {
             return Err(invalid("Archive entry ended before its declared size"));
+        }
+        // Also repair zero-byte files and stale trailing bytes.
+        if file.is_some() || !target.is_file() || fs::metadata(&target)?.len() != expected_length {
+            let file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false)
+                .open(&target)?;
+            file.set_len(expected_length)?;
         }
         files.push(safe_relative(&name)?.to_string_lossy().replace('\\', "/"));
         #[cfg(unix)]
@@ -462,5 +533,55 @@ mod tests {
         assert_eq!(fs::read(root.path().join("save.dat")).unwrap(), b"save");
         assert_eq!(DropData::read(root.path()).unwrap().game_id, "game");
         assert_eq!(progress.sum(), progress.get_max());
+
+        let files = super::super::server_archive::read_inventory(root.path(), "game").unwrap();
+        let originals = files
+            .iter()
+            .map(|name| (name.clone(), fs::read(root.path().join(name)).unwrap()))
+            .collect::<Vec<_>>();
+        for (name, bytes) in &originals {
+            if !bytes.is_empty() {
+                let mut corrupt = bytes.clone();
+                corrupt[0] ^= 0xff;
+                fs::write(root.path().join(name), corrupt).unwrap();
+            }
+        }
+        fs::write(
+            root.path().join("old-file"),
+            b"keep extra files during verification",
+        )
+        .unwrap();
+        assert!(
+            verify_managed(
+                &path,
+                root.path(),
+                "game",
+                "version",
+                size,
+                &control,
+                &progress
+            )
+            .unwrap()
+        );
+        for (name, bytes) in &originals {
+            assert_eq!(&fs::read(root.path().join(name)).unwrap(), bytes);
+        }
+        if let Some((name, _)) = originals.first() {
+            fs::remove_file(root.path().join(name)).unwrap();
+            assert!(
+                verify_managed(
+                    &path,
+                    root.path(),
+                    "game",
+                    "version",
+                    size,
+                    &control,
+                    &progress
+                )
+                .unwrap()
+            );
+        }
+        assert_eq!(fs::read(root.path().join("save.dat")).unwrap(), b"save");
+        assert!(root.path().join("old-file").exists());
     }
 }

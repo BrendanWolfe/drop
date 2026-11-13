@@ -83,7 +83,6 @@ pub fn resolve_steam(
     }
     let Some(GameDownloadStatus::Installed {
         install_type: InstalledGameType::Installed,
-        install_dir,
         version_id,
         ..
     }) = db.applications.game_statuses.get(id)
@@ -95,6 +94,12 @@ pub fn resolve_steam(
         .installed_game_version
         .get(id)
         .ok_or("Game is not installed.")?;
+    let resolved_install_dir = db
+        .applications
+        .resolve_install_path(meta)?
+        .to_string_lossy()
+        .into_owned();
+    let install_dir = &resolved_install_dir;
     if meta.target_platform != Platform::Windows {
         return Err("Steam shortcuts require a Windows game.".into());
     }

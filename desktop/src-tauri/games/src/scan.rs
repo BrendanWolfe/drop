@@ -5,79 +5,215 @@ use database::{
 };
 use log::warn;
 
-use crate::{
-    downloads::drop_data::{DROPDATA_PATH, DropData},
-    library::set_partially_installed_db,
-};
+use crate::downloads::drop_data::{DROPDATA_PATH, DropData};
+use database::models::data::InstalledGameType;
+use std::path::PathBuf;
 
-pub fn scan_install_dirs() {
+pub fn scan_install_dirs() -> Vec<String> {
+    let directories = registered_directories(&database::borrow_db_checked());
+    // Discovery reads only directory entries and .dropdata, never game payloads.
+    // Do not hold the database write lock during filesystem IO.
+    let discovered = discover(directories);
     let mut db_lock = borrow_db_mut_checked();
-    scan_install_dirs_db(&mut db_lock);
+    reconcile(&mut db_lock, discovered)
 }
 
+#[cfg(test)]
 fn scan_install_dirs_db(db: &mut Database) {
-    // Adopt old emulator records in place; never relocate their existing files.
-    let legacy = db.applications.installed_game_version.values().filter(|meta| {
-        remote::cache::get_cached_object_db::<crate::library::Game>(&format!("game/{}", meta.id), db)
-            .is_ok_and(|game| game.game_type == "Emulator")
-            || db.applications.game_versions.get(&meta.version).is_some_and(|version| version.launches.iter().any(|launch| launch.emulator_profile.is_some()))
-            || !crate::emulators::required_by(db, meta).is_empty()
-    }).map(|meta| meta.id.clone()).collect::<Vec<_>>();
-    for id in legacy { db.applications.migrate_emulator(&id); }
+    let discovered = discover(registered_directories(db));
+    reconcile(db, discovered);
+}
+
+fn registered_directories(db: &Database) -> Vec<PathBuf> {
     let mut directories = db.applications.install_dirs.clone();
-    for directory in db.applications.install_directories(database::install_locations::InstallLocationKind::Emulator) {
-        if !directories.contains(directory) { directories.push(directory.clone()); }
+    for directory in db
+        .applications
+        .install_directories(database::install_locations::InstallLocationKind::Emulator)
+    {
+        if !directories.contains(directory) {
+            directories.push(directory.clone());
+        }
     }
+    directories
+}
+
+fn discover(directories: Vec<PathBuf>) -> Vec<(PathBuf, DropData)> {
+    let mut discovered = Vec::new();
     for install_dir in directories {
         let Ok(files) = fs::read_dir(&install_dir) else {
             continue;
         };
-        let mut paths = files.flatten().map(|entry| entry.path()).collect::<Vec<_>>();
-        // New emulator builds are direct siblings of games. Keep discovering
-        // the old hidden container for recovery, without moving existing files.
-        if let Ok(builds) = fs::read_dir(install_dir.join(".drop-emulators")) {
-            paths.extend(builds.flatten().map(|entry| entry.path()));
+        let mut paths = files
+            .flatten()
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        let legacy_emulators = install_dir.join(".drop-emulators");
+        if fs::symlink_metadata(&legacy_emulators).is_ok_and(|meta| meta.is_dir()) {
+            if let Ok(builds) = fs::read_dir(legacy_emulators) {
+                paths.extend(builds.flatten().map(|entry| entry.path()));
+            }
         }
+        paths.sort();
         for path in paths {
-            let drop_data_file = path.join(DROPDATA_PATH);
-            if !drop_data_file.exists() {
+            // Do not adopt a symlink to an installation outside this root.
+            if !fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir()) {
                 continue;
             }
-            let drop_data = match DropData::read(&path) {
-                Ok(v) => v,
-                Err(err) => {
-                    warn!(
-                        ".dropdata exists for {}, but couldn't read it. is it corrupted? {:?}",
-                        path.display(),
-                        err
-                    );
-                    continue;
-                }
-            };
-            let emulator = drop_data.emulator || remote::cache::get_cached_object_db::<crate::library::Game>(&format!("game/{}", drop_data.game_id), db).is_ok_and(|game| game.game_type == "Emulator");
-            if emulator && db.applications.emulator_installation(&drop_data.game_id, &drop_data.game_version, drop_data.target_platform).is_some() { continue; }
-            if !emulator && matches!(
-                db.applications.game_statuses.get(&drop_data.game_id),
-                Some(GameDownloadStatus::Installed { .. })
-            ) {
+            if !path.join(DROPDATA_PATH).exists() {
                 continue;
             }
-
-            let metadata = DownloadableMetadata::new(
-                drop_data.game_id,
-                drop_data.game_version,
-                drop_data.target_platform,
-                if emulator { DownloadType::Emulator } else { DownloadType::Game },
-            );
-            set_partially_installed_db(
-                db,
-                &metadata,
-                path.to_string_lossy().into_owned(),
-                None,
-                drop_data.configuration,
-            );
+            match DropData::read(&path) {
+                Ok(data) => discovered.push((path, data)),
+                Err(error) => warn!("Couldn't read .dropdata in {}: {error}", path.display()),
+            }
         }
     }
+    discovered
+}
+
+fn reconcile(db: &mut Database, discovered: Vec<(PathBuf, DropData)>) -> Vec<String> {
+    let mut recovered = Vec::new();
+    // Adopt old emulator records in place; never relocate their existing files.
+    let legacy = db
+        .applications
+        .installed_game_version
+        .values()
+        .filter(|meta| {
+            remote::cache::get_cached_object_db::<crate::library::Game>(
+                &format!("game/{}", meta.id),
+                db,
+            )
+            .is_ok_and(|game| game.game_type == "Emulator")
+                || db
+                    .applications
+                    .game_versions
+                    .get(&meta.version)
+                    .is_some_and(|version| {
+                        version
+                            .launches
+                            .iter()
+                            .any(|launch| launch.emulator_profile.is_some())
+                    })
+                || !crate::emulators::required_by(db, meta).is_empty()
+        })
+        .map(|meta| meta.id.clone())
+        .collect::<Vec<_>>();
+    for id in legacy {
+        db.applications.migrate_emulator(&id);
+    }
+    db.applications.migrate_install_records();
+    for (path, drop_data) in discovered {
+        let emulator = drop_data.emulator
+            || remote::cache::get_cached_object_db::<crate::library::Game>(
+                &format!("game/{}", drop_data.game_id),
+                db,
+            )
+            .is_ok_and(|game| game.game_type == "Emulator");
+        let metadata = DownloadableMetadata::new(
+            drop_data.game_id.clone(),
+            drop_data.game_version.clone(),
+            drop_data.target_platform,
+            if emulator {
+                DownloadType::Emulator
+            } else {
+                DownloadType::Game
+            },
+        );
+        if db.applications.local_games.contains_key(&metadata.id)
+            || db.applications.transient_statuses.contains_key(&metadata)
+        {
+            continue;
+        }
+        let previous = if emulator {
+            db.applications
+                .emulator_installation(&metadata.id, &metadata.version, metadata.target_platform)
+                .map(|item| item.status.clone())
+        } else {
+            if let Some(existing) = db.applications.installed_game_version.get(&metadata.id) {
+                if existing.version != metadata.version
+                    || existing.target_platform != metadata.target_platform
+                {
+                    continue;
+                }
+            }
+            db.applications.game_statuses.get(&metadata.id).cloned()
+        };
+        if let Some(GameDownloadStatus::Installed { install_dir, .. }) = &previous {
+            // Keep an existing exact, live binding when duplicate copies exist.
+            if PathBuf::from(install_dir) != path
+                && DropData::read(&PathBuf::from(install_dir)).is_ok_and(|data| {
+                    data.game_id == metadata.id
+                        && data.game_version == metadata.version
+                        && data.target_platform == metadata.target_platform
+                })
+            {
+                continue;
+            }
+        }
+        if !db
+            .applications
+            .game_versions
+            .contains_key(&metadata.version)
+        {
+            if let Some(version) = drop_data.installed_version.filter(|version| {
+                version.game_id == metadata.id && version.version_id == metadata.version
+            }) {
+                db.applications
+                    .game_versions
+                    .insert(metadata.version.clone(), version);
+            }
+        }
+        if let Some(version) = db.applications.game_versions.get_mut(&metadata.version) {
+            // Existing device configuration wins over a copied checkpoint.
+            if let Some(GameDownloadStatus::Installed {
+                install_type: InstalledGameType::PartiallyInstalled { configuration },
+                ..
+            }) = &previous
+            {
+                version.user_configuration = configuration.clone();
+            } else if previous.is_none() || matches!(previous, Some(GameDownloadStatus::Remote {}))
+            {
+                version.user_configuration = drop_data.configuration;
+            }
+        }
+        let setup_required = matches!(
+            &previous,
+            Some(GameDownloadStatus::Installed {
+                install_type: InstalledGameType::SetupRequired,
+                ..
+            })
+        ) || (!matches!(
+            &previous,
+            Some(GameDownloadStatus::Installed {
+                install_type: InstalledGameType::Installed,
+                ..
+            })
+        ) && drop_data.setup_completed == Some(false));
+        let update_available = matches!(
+            previous,
+            Some(GameDownloadStatus::Installed {
+                update_available: true,
+                ..
+            })
+        );
+        db.applications.record_installation(
+            &metadata,
+            GameDownloadStatus::Installed {
+                version_id: metadata.version.clone(),
+                install_dir: path.to_string_lossy().into_owned(),
+                install_type: if setup_required {
+                    InstalledGameType::SetupRequired
+                } else {
+                    InstalledGameType::Installed
+                },
+                update_available,
+            },
+        );
+        if !emulator {
+            recovered.push(metadata.id);
+        }
+    }
+    recovered
 }
 
 #[cfg(test)]
@@ -140,12 +276,11 @@ mod tests {
         let game_dir = install_dir.join(game_id);
         match db.applications.game_statuses.get(game_id) {
             Some(GameDownloadStatus::Installed {
-                install_type: InstalledGameType::PartiallyInstalled { configuration },
+                install_type: InstalledGameType::Installed,
                 version_id,
                 install_dir: recovered_install_dir,
                 update_available,
             }) => {
-                assert_eq!(configuration, expected_configuration);
                 assert_eq!(version_id, version);
                 assert_eq!(
                     recovered_install_dir,
@@ -153,7 +288,7 @@ mod tests {
                 );
                 assert!(!update_available);
             }
-            other => panic!("expected partially installed status for {game_id}, got {other:?}"),
+            other => panic!("expected trusted installed status for {game_id}, got {other:?}"),
         }
 
         let metadata = db
@@ -165,6 +300,8 @@ mod tests {
         assert_eq!(metadata.version, version);
         assert_eq!(metadata.target_platform, Platform::HOST);
         assert_eq!(metadata.download_type, DownloadType::Game);
+        let data = DropData::read(&game_dir).unwrap();
+        assert_eq!(&data.configuration, expected_configuration);
     }
 
     #[test]
@@ -210,7 +347,8 @@ mod tests {
             ("v2", "dolphin-6.0"),
             ("v3", ".drop-emulators/legacy-hex-build-Linux"),
         ] {
-            let installation = db.applications
+            let installation = db
+                .applications
                 .emulator_installation("dolphin", version, Platform::Linux)
                 .unwrap();
             assert!(matches!(&installation.status,
@@ -306,5 +444,96 @@ mod tests {
             .get("installed-game")
             .unwrap();
         assert_eq!(metadata.version, "1.0.0");
+    }
+
+    #[test]
+    fn one_scan_rebinds_a_moved_library_and_trusts_markers_without_payloads() {
+        let base = tempfile::tempdir().unwrap();
+        let old = base.path().join("old");
+        let new = base.path().join("new");
+        fs::create_dir(&old).unwrap();
+        let mut db = database_with_install_dir(&old);
+        for (id, partial) in [("complete", false), ("partial", true)] {
+            create_drop_data(&old, id, "v1", test_configuration());
+            let meta = DownloadableMetadata::new(
+                id.into(),
+                "v1".into(),
+                Platform::HOST,
+                DownloadType::Game,
+            );
+            db.applications.record_installation(
+                &meta,
+                GameDownloadStatus::Installed {
+                    install_type: if partial {
+                        InstalledGameType::PartiallyInstalled {
+                            configuration: test_configuration(),
+                        }
+                    } else {
+                        InstalledGameType::Installed
+                    },
+                    version_id: "v1".into(),
+                    install_dir: old.join(id).to_string_lossy().into_owned(),
+                    update_available: false,
+                },
+            );
+        }
+        fs::rename(&old, &new).unwrap();
+        db.applications
+            .add_install_directory(
+                database::install_locations::InstallLocationKind::Game,
+                new.clone(),
+            )
+            .unwrap();
+        scan_install_dirs_db(&mut db);
+        for id in ["complete", "partial"] {
+            assert_recovered(&db, &new, id, "v1", &test_configuration());
+            let meta = &db.applications.installed_game_version[id];
+            assert_eq!(
+                db.applications.resolve_install_path(meta).unwrap(),
+                new.join(id)
+            );
+            assert_eq!(
+                fs::read_dir(new.join(id)).unwrap().count(),
+                1,
+                "no payload or manifest is required"
+            );
+        }
+        assert_eq!(db.applications.install_references.len(), 2);
+        assert!(db.applications.transient_statuses.is_empty());
+        let before = serialized_snapshot(&db);
+        scan_install_dirs_db(&mut db);
+        assert_eq!(db.applications.install_references.len(), 2);
+        let mut restarted: Database = serde_json::from_str(&before).unwrap();
+        restarted.applications.migrate_install_records();
+        for id in ["complete", "partial"] {
+            assert_recovered(&restarted, &new, id, "v1", &test_configuration());
+        }
+    }
+
+    fn serialized_snapshot(db: &Database) -> String {
+        let mut snapshot = db.clone();
+        snapshot.applications.prepare_install_records_for_save();
+        serde_json::to_string(&snapshot).unwrap()
+    }
+
+    #[test]
+    fn scan_does_not_promote_an_active_download() {
+        let root = tempfile::tempdir().unwrap();
+        create_drop_data(root.path(), "game", "v1", test_configuration());
+        let mut db = database_with_install_dir(root.path());
+        let meta = DownloadableMetadata::new(
+            "game".into(),
+            "v1".into(),
+            Platform::HOST,
+            DownloadType::Game,
+        );
+        db.applications.transient_statuses.insert(
+            meta,
+            database::ApplicationTransientStatus::Downloading {
+                version_id: "v1".into(),
+            },
+        );
+        scan_install_dirs_db(&mut db);
+        assert!(db.applications.game_statuses.is_empty());
     }
 }

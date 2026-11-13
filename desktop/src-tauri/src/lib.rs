@@ -12,7 +12,6 @@ use std::{
     fs::File,
     io::Write,
     panic::PanicHookInfo,
-    path::Path,
     str::FromStr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -39,7 +38,7 @@ use ::remote::{
     utils::{DROP_APP_HANDLE, DROP_CLIENT_ASYNC},
 };
 use database::{
-    DB, GameDownloadStatus, borrow_db_checked, borrow_db_mut_checked, db::DATA_ROOT_DIR,
+    DB, borrow_db_checked, borrow_db_mut_checked, db::DATA_ROOT_DIR,
 };
 use log::{LevelFilter, debug, info, warn};
 use log4rs::{
@@ -63,6 +62,7 @@ mod app_updates;
 mod collections;
 mod download_manager;
 mod downloads;
+mod pending_downloads;
 mod games;
 mod emulators;
 mod process;
@@ -138,7 +138,7 @@ async fn setup(handle: AppHandle) -> AppState {
         false => UmuState::NotInstalled,
     };
 
-    scan_install_dirs();
+    let _ = scan_install_dirs();
     ::games::local::reset_interrupted(&mut borrow_db_mut_checked());
 
     if !is_set_up {
@@ -154,38 +154,9 @@ async fn setup(handle: AppHandle) -> AppState {
     // TODO: Account for possible failure
     let (app_status, user) = auth::setup().await;
 
-    let db_handle = borrow_db_checked();
-    let mut missing_games = Vec::new();
-    let statuses = db_handle.applications.game_statuses.clone();
-    drop(db_handle);
-
-    for (game_id, status) in statuses {
-        if borrow_db_checked().applications.local_games.contains_key(&game_id) {
-            continue;
-        }
-        match status {
-            GameDownloadStatus::Remote {} => {}
-            GameDownloadStatus::Installed { install_dir, .. } => {
-                let install_dir_path = Path::new(&install_dir);
-                if !install_dir_path.exists() {
-                    missing_games.push(game_id);
-                }
-            }
-        }
-    }
-
-    info!("detected games missing: {missing_games:?}");
-
-    let mut db_handle = borrow_db_mut_checked();
-    for game_id in missing_games {
-        db_handle
-            .applications
-            .game_statuses
-            .entry(game_id)
-            .and_modify(|v| *v = GameDownloadStatus::Remote {});
-    }
-
-    drop(db_handle);
+    // Keep unavailable libraries registered (for example, an unplugged drive).
+    // Discovery rebinds moved installs; a missing old absolute path must not
+    // erase the state needed to recover them on the next scan.
 
     debug!("finished setup!");
 
@@ -302,6 +273,9 @@ pub fn run() {
             // Downloads
             download_game,
             resume_download,
+            verify_file_integrity,
+            pending_downloads::fetch_pending_downloads,
+            pending_downloads::queue_pending_download,
             move_download_in_queue,
             move_queued_download,
             pause_downloads,

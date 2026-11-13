@@ -1,6 +1,5 @@
 import { ArkErrors, type } from "arktype";
 import type { Prisma } from "~/prisma/client/client";
-import { GameType } from "~/prisma/client/enums";
 import aclManager from "~/server/internal/acls";
 import prisma from "~/server/internal/db/database";
 import gameSizeManager from "~/server/internal/gamesize";
@@ -8,6 +7,8 @@ import { parsePlatform } from "~/server/internal/utils/parseplatform";
 import { getAgeRestrictionFilter } from "~/server/internal/utils/ageRestrictions";
 import {
   emulationFilterSchema,
+  consoleFilterSchema,
+  combineStoreFilters,
   getEmulationFilter,
   getNameFilter,
   nameSearchSchema,
@@ -24,6 +25,7 @@ const StoreRead = type({
   tags: "string?",
   platform: "string?",
   emulated: emulationFilterSchema.optional(),
+  consoles: consoleFilterSchema.optional(),
   q: nameSearchSchema.optional(),
 
   company: "string?",
@@ -129,15 +131,14 @@ export default defineEventHandler(async (h3) => {
 
   const ageFilter = await getAgeRestrictionFilter(userId, user.admin);
 
-  const finalFilter: Prisma.GameWhereInput = {
-    ...tagFilter,
-    ...platformFilter,
-    ...companyFilter,
-    ...ageFilter,
-    ...getEmulationFilter(options.emulated),
-    ...getNameFilter(options.q),
-    type: GameType.Game,
-  };
+  const finalFilter = combineStoreFilters(
+    tagFilter,
+    platformFilter,
+    companyFilter,
+    ageFilter,
+    getEmulationFilter(options.emulated, options.consoles),
+    getNameFilter(options.q),
+  );
 
   if (options.sort === "size") {
     const games = await prisma.game.findMany({

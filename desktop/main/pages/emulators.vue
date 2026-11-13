@@ -310,6 +310,16 @@
                   >
                     <TrashIcon class="size-4" aria-hidden="true" />
                   </button>
+                  <button
+                    type="button"
+                    class="emulator-button size-10 !px-0"
+                    :disabled="version.busy"
+                    :aria-label="`Verify file integrity for ${version.versionName}`"
+                    title="Verify file integrity"
+                    @click="integrityTarget = version; integrityOpen = true"
+                  >
+                    <ShieldCheckIcon class="size-4" aria-hidden="true" />
+                  </button>
                 </div>
               </div>
 
@@ -400,6 +410,14 @@
       :emulator="uninstallTarget"
       @uninstalled="refresh"
     />
+    <FileIntegrityModal
+      v-if="integrityTarget && integrityOpen"
+      v-model="integrityOpen"
+      :game-id="integrityTarget.gameId"
+      :name="`${integrityTarget.name} ${integrityTarget.versionName}`"
+      :version-id="integrityTarget.versionId"
+      :target-platform="integrityTarget.platform"
+    />
   </div>
 </template>
 
@@ -412,6 +430,7 @@ import {
   CpuChipIcon,
   FolderOpenIcon,
   MagnifyingGlassIcon,
+  ShieldCheckIcon,
   TrashIcon,
 } from "@heroicons/vue/20/solid";
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
@@ -434,6 +453,8 @@ const searchQuery = ref("");
 const selectedGameId = ref<string>();
 const uninstallTarget = ref<InstalledEmulator>();
 const confirmOpen = ref(false);
+const integrityTarget = ref<InstalledEmulator>();
+const integrityOpen = ref(false);
 const resuming = ref<Record<string, boolean>>({});
 const opening = ref<Record<string, boolean>>({});
 const detailsPanel = ref<HTMLElement>();

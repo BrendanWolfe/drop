@@ -551,7 +551,7 @@
         "dropGameAltPlaceholder": "Exemple d'icône de Jeu",
         "dropGameDescriptionPlaceholder": "Ceci est un jeu exemple. Il sera remplacé si vous importez un jeu.",
         "dropGameNamePlaceholder": "Jeu Exemple",
-        "showGamePanelTextDecoration": "Afficher le titre et la description sur les tuiles de jeu (par défaut : activé)",
+        "showGamePanelTextDecoration": "Afficher le titre sur les tuiles de jeu (par défaut : activé)",
         "title": "Store"
       },
       "title": "Paramètres"

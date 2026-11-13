@@ -104,6 +104,19 @@
                 <TrashIcon class="size-5" />
               </button>
             </MenuItem>
+            <MenuItem v-if="showVerify !== false" v-slot="{ active }">
+              <button
+                type="button"
+                @click="() => emit('verify')"
+                :class="[
+                  active ? 'bg-zinc-800 text-zinc-100 outline-none' : 'text-zinc-400',
+                  'w-full min-h-10 px-4 py-2 text-left text-sm inline-flex items-center justify-between gap-x-2',
+                ]"
+              >
+                Verify file integrity…
+                <ShieldCheckIcon class="size-5 shrink-0" aria-hidden="true" />
+              </button>
+            </MenuItem>
           </div>
         </MenuItems>
       </transition>
@@ -132,6 +145,7 @@ import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
 import {
   Cog6ToothIcon,
   FolderOpenIcon,
+  ShieldCheckIcon,
   TrashIcon,
 } from "@heroicons/vue/24/outline";
 import { ArrowsRightLeftIcon } from "@heroicons/vue/24/solid";
@@ -141,6 +155,7 @@ const props = defineProps<{
   requiresUpdate?: boolean;
   updatingDependencies?: boolean;
   checkingDependencies?: boolean;
+  showVerify?: boolean;
 }>();
 const emit = defineEmits<{
   (e: "install"): void;
@@ -152,6 +167,7 @@ const emit = defineEmits<{
   (e: "open-folder"): void;
   (e: "resume"): void;
   (e: "update"): void;
+  (e: "verify"): void;
 }>();
 
 interface StatusStyleData {

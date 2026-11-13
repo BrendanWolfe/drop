@@ -57,6 +57,7 @@ pub mod data {
         V0_4_0 { database: v1::Database },
         V0_4_4 { database: v1::Database },
         V0_4_8 { database: v1::Database },
+        V0_4_13 { database: v1::Database },
     }
 
     pub struct DatabaseVersionSerializable(pub(crate) Database);
@@ -66,16 +67,11 @@ pub mod data {
         where
             S: serde::Serializer,
         {
-            // Older clients automatically uninstall entries whose server cache
-            // is missing. Do not let them interpret local folder registrations
-            // as server installations: use a new format tag when locals exist.
-            let version = if !self.0.applications.emulator_installations.is_empty() {
-                DatabaseVersionEnum::V0_4_8 { database: self.0.clone() }
-            } else if self.0.applications.local_games.is_empty() {
-                DatabaseVersionEnum::V0_4_0 { database: self.0.clone() }
-            } else {
-                DatabaseVersionEnum::V0_4_4 { database: self.0.clone() }
-            };
+            // Managed install_dir values are now runtime caches. Older clients
+            // must not interpret their empty on-disk values as missing installs.
+            let mut database = self.0.clone();
+            database.applications.prepare_install_records_for_save();
+            let version = DatabaseVersionEnum::V0_4_13 { database };
             version.serialize(serializer)
         }
     }
@@ -85,9 +81,11 @@ pub mod data {
         where
             D: serde::Deserializer<'de>,
         {
-            Ok(match DatabaseVersionEnum::deserialize(deserializer)? {
-                DatabaseVersionEnum::V0_4_0 { database } | DatabaseVersionEnum::V0_4_4 { database } | DatabaseVersionEnum::V0_4_8 { database } => DatabaseVersionSerializable(database),
-            })
+            let mut database = match DatabaseVersionEnum::deserialize(deserializer)? {
+                DatabaseVersionEnum::V0_4_0 { database } | DatabaseVersionEnum::V0_4_4 { database } | DatabaseVersionEnum::V0_4_8 { database } | DatabaseVersionEnum::V0_4_13 { database } => database,
+            };
+            database.applications.migrate_install_records();
+            Ok(DatabaseVersionSerializable(database))
         }
     }
 
@@ -379,6 +377,10 @@ pub mod data {
         #[serde(rename_all = "camelCase")]
         pub struct DatabaseApplications {
             pub install_dirs: Vec<PathBuf>,
+            #[serde(default)]
+            pub install_location_roots: HashMap<String, PathBuf>,
+            #[serde(default)]
+            pub install_references: HashMap<String, crate::install_records::InstallReference>,
             // Legacy databases inherit their existing locations until first edited.
             #[serde(default)]
             pub emulator_install_dirs: Option<Vec<PathBuf>>,
@@ -444,6 +446,8 @@ pub mod data {
                 proxy_auth_cleanup: Default::default(),
                 applications: DatabaseApplications {
                     install_dirs: vec![games_base_dir.clone()],
+                    install_location_roots: HashMap::new(),
+                    install_references: HashMap::new(),
                     emulator_install_dirs: Some(vec![games_base_dir]),
                     default_install_dir: None,
                     default_emulator_install_dir: None,
@@ -562,7 +566,10 @@ pub mod data {
             use crate::platform::Platform;
             let mut database = Database::new("games", None, "cache".into());
             let legacy = ron::to_string(&DatabaseVersionSerializable(database.clone())).unwrap();
-            assert!(legacy.starts_with("V0_4_0("));
+            assert!(legacy.starts_with("V0_4_13("));
+            for tag in ["V0_4_0", "V0_4_4", "V0_4_8"] {
+                let _: DatabaseVersionSerializable = ron::from_str(&legacy.replacen("V0_4_13", tag, 1)).unwrap();
+            }
             let _: DatabaseVersionSerializable = ron::from_str(&legacy).unwrap();
             database.applications.local_games.insert("local-test".into(), LocalGame {
                 id: "local-test".into(), name: "My game".into(), root: "games/test".into(),
@@ -571,7 +578,7 @@ pub mod data {
                 playtime_seconds: 123, archive: None,
             });
             let encoded = ron::to_string(&DatabaseVersionSerializable(database)).unwrap();
-            assert!(encoded.starts_with("V0_4_4("));
+            assert!(encoded.starts_with("V0_4_13("));
             let decoded: DatabaseVersionSerializable = ron::from_str(&encoded).unwrap();
             assert_eq!(decoded.0.applications.local_games["local-test"].playtime_seconds, 123);
         }
