@@ -46,6 +46,11 @@ pub enum DownloadManagerSignal {
         current_index: usize,
         new_index: usize,
     },
+    RearrangeByMetadata {
+        metadata: DownloadableMetadata,
+        new_index: usize,
+        expected_front: DownloadableMetadata,
+    },
     /// Any error which occurs in the agent
     Error(DownloadableMetadata, ApplicationDownloadError),
     /// Pushes UI update
@@ -171,6 +176,21 @@ impl DownloadManager {
     }
     pub async fn pause_downloads(&self) {
         send!(self.command_sender, DownloadManagerSignal::Stop);
+    }
+    pub async fn rearrange_download(
+        &self,
+        metadata: DownloadableMetadata,
+        new_index: usize,
+        expected_front: DownloadableMetadata,
+    ) {
+        send!(
+            self.command_sender,
+            DownloadManagerSignal::RearrangeByMetadata {
+                metadata,
+                new_index,
+                expected_front
+            }
+        );
     }
     pub async fn resume_downloads(&self) {
         send!(self.command_sender, DownloadManagerSignal::Resume);

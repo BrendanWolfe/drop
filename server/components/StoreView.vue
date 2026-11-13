@@ -143,9 +143,40 @@
 
       <main class="mx-auto px-4 sm:px-6 lg:px-8">
         <div
-          class="flex items-baseline justify-between border-b border-zinc-700 py-6"
+          class="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-700 py-6"
         >
-          <div />
+          <form
+            role="search"
+            class="relative w-full sm:max-w-sm"
+            @submit.prevent="applySearch"
+          >
+            <label for="store-name-search" class="sr-only">{{
+              $t("store.view.search")
+            }}</label>
+            <MagnifyingGlassIcon
+              class="pointer-events-none absolute left-3 top-3 size-5 text-zinc-400"
+              aria-hidden="true"
+            />
+            <input
+              id="store-name-search"
+              ref="searchInput"
+              v-model="search"
+              type="search"
+              maxlength="200"
+              autocomplete="off"
+              :placeholder="$t('store.view.search')"
+              class="h-11 w-full rounded-md border-zinc-700 bg-zinc-950 py-2 pl-10 pr-11 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-blue-500 focus:ring-blue-500 [&::-webkit-search-cancel-button]:appearance-none"
+            />
+            <button
+              v-if="search"
+              type="button"
+              :aria-label="$t('store.view.clearSearch')"
+              class="absolute right-0.5 top-0.5 flex size-10 items-center justify-center rounded text-zinc-400 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+              @click="clearSearch"
+            >
+              <XMarkIcon class="size-5" aria-hidden="true" />
+            </button>
+          </form>
           <div class="flex items-center">
             <Menu as="div" class="relative inline-block text-left">
               <div>
@@ -307,7 +338,7 @@
             <!-- Product grid -->
             <div
               v-if="games?.length ?? 0 > 0"
-              class="col-span-4 grid gap-5 grid-cols-[repeat(auto-fill,minmax(150px,auto))]"
+              class="relative col-span-4 grid gap-5 grid-cols-[repeat(auto-fill,minmax(150px,auto))]"
             >
               <!-- Your content -->
               <GamePanel
@@ -369,6 +400,7 @@ import { XMarkIcon } from "@heroicons/vue/24/outline";
 import {
   ChevronDownIcon,
   FunnelIcon,
+  MagnifyingGlassIcon,
   MinusIcon,
   PlusIcon,
   Squares2X2Icon,
@@ -382,6 +414,26 @@ const {
 } = await $dropFetch(`/api/v1/settings`);
 
 const mobileFiltersOpen = ref(false);
+const searchInput = ref<HTMLInputElement>();
+const search = ref("");
+const searchQuery = ref("");
+let searchTimeout: ReturnType<typeof setTimeout> | undefined;
+
+function applySearch() {
+  clearTimeout(searchTimeout);
+  searchQuery.value = search.value.trim();
+}
+
+function clearSearch() {
+  search.value = "";
+  applySearch();
+  searchInput.value?.focus();
+}
+
+watch(search, () => {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(applySearch, 250);
+});
 
 const props = defineProps<{
   params?: { [key: string]: string };
@@ -475,7 +527,13 @@ const filterQuery = computed(() => {
         .map(([k, v]) => `${k}=${v}`)
         .join("&")
     : props.params;
-  return `${query}${extraFilters ? (query ? "&" : "") + extraFilters : ""}`;
+  return [
+    query,
+    extraFilters,
+    searchQuery.value ? `q=${encodeURIComponent(searchQuery.value)}` : "",
+  ]
+    .filter(Boolean)
+    .join("&");
 });
 
 const games = ref<Array<SerializeObject<GameModel>>>();
@@ -528,6 +586,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearTimeout(searchTimeout);
   window.removeEventListener("scroll", handleWindowScroll);
 });
 

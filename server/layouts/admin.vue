@@ -204,6 +204,7 @@ import {
   DocumentIcon,
   ArrowDownTrayIcon,
   CpuChipIcon,
+  ExclamationTriangleIcon,
 } from "@heroicons/vue/24/outline";
 import type { NavigationItem } from "~/composables/types";
 import { useCurrentNavigationIndex } from "~/composables/current-page-engine";
@@ -254,6 +255,18 @@ const navigation: Array<NavigationItem & { icon: Component }> = [
     label: $t("adminDownloads.title"),
     route: "/admin/downloads",
     prefix: "/admin/downloads",
+    icon: ArrowDownTrayIcon,
+  },
+  {
+    label: $t("clientActivity.errorsTitle"),
+    route: "/admin/errors",
+    prefix: "/admin/errors",
+    icon: ExclamationTriangleIcon,
+  },
+  {
+    label: $t("clientActivity.historyTitle"),
+    route: "/admin/download-history",
+    prefix: "/admin/download-history",
     icon: ArrowDownTrayIcon,
   },
   {

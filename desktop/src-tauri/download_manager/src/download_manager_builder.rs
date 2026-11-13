@@ -70,6 +70,7 @@ enum TerminalOutcome {
 struct TerminalRecord {
     metadata: DownloadableMetadata,
     outcome: TerminalOutcome,
+    error: Option<String>,
 }
 
 #[derive(Default)]
@@ -90,6 +91,13 @@ impl CurrentDownload {
 
     fn has_terminal(&self) -> bool {
         lock!(self.terminal).is_some()
+    }
+
+    fn terminal_error_for(&self, metadata: &DownloadableMetadata) -> Option<String> {
+        lock!(self.terminal)
+            .as_ref()
+            .filter(|record| &record.metadata == metadata)
+            .and_then(|record| record.error.clone())
     }
 
     fn take_terminal_for(&self, metadata: &DownloadableMetadata) -> Option<TerminalOutcome> {
@@ -189,6 +197,7 @@ pub struct DownloadManagerBuilder {
     progress: CurrentProgressObject,
     status: Arc<Mutex<DownloadManagerStatus>>,
     app_handle: AppHandle,
+    sessions: HashMap<DownloadableMetadata, String>,
 
     current_download: CurrentDownload,
     user_paused: bool,
@@ -209,6 +218,7 @@ impl DownloadManagerBuilder {
             sender: command_sender.clone(),
             progress: active_progress.clone(),
             app_handle,
+            sessions: HashMap::new(),
 
             current_download: CurrentDownload::default(),
             user_paused: false,
@@ -314,6 +324,24 @@ impl DownloadManagerBuilder {
                 DownloadManagerSignal::Completed(meta) => {
                     self.manage_completed_signal(meta).await;
                 }
+                DownloadManagerSignal::RearrangeByMetadata {
+                    metadata,
+                    new_index,
+                    expected_front,
+                } => {
+                    // A download can finish while a drag or confirmation is open.
+                    // Never reorder a different item using stale UI indices.
+                    let queue = self.download_queue.read();
+                    let index = queue.iter().position(|entry| entry == &metadata);
+                    if queue.front() == Some(&expected_front)
+                        && new_index < queue.len()
+                        && let Some(index) = index
+                    {
+                        self.manage_rearrange_signal(index, new_index).await;
+                    } else {
+                        self.push_ui_queue_update();
+                    }
+                }
                 DownloadManagerSignal::Queue(download_agent) => {
                     self.manage_queue_signal(download_agent).await;
                 }
@@ -354,7 +382,11 @@ impl DownloadManagerBuilder {
 
         download_agent.on_queued(&self.app_handle);
         self.download_queue.append(meta.clone());
-        self.download_agent_registry.insert(meta, download_agent);
+        self.sessions
+            .insert(meta.clone(), uuid::Uuid::new_v4().to_string());
+        self.download_agent_registry
+            .insert(meta.clone(), download_agent);
+        self.report_activity(&meta, "Queued", None);
 
         if self.user_paused && !self.current_download.is_active() {
             self.set_status(DownloadManagerStatus::Paused);
@@ -422,6 +454,7 @@ impl DownloadManagerBuilder {
         }
 
         info!("starting download for {agent_data:?}");
+        self.report_activity(&agent_data, "Downloading", None);
         let control_flag = download_agent.control_flag();
         let download_progress = download_agent.dl_progress().clone();
         let terminal = self.current_download.terminal_handle();
@@ -440,6 +473,7 @@ impl DownloadManagerBuilder {
                         *lock!(terminal) = Some(TerminalRecord {
                             metadata: metadata.clone(),
                             outcome: TerminalOutcome::Error,
+                            error: Some(e.to_string()),
                         });
                         send!(sender, DownloadManagerSignal::Error(metadata, e));
                         return;
@@ -463,6 +497,7 @@ impl DownloadManagerBuilder {
                         *lock!(terminal) = Some(TerminalRecord {
                             metadata: metadata.clone(),
                             outcome: TerminalOutcome::Error,
+                            error: Some(e.to_string()),
                         });
                         send!(sender, DownloadManagerSignal::Error(metadata, e));
                         return;
@@ -480,6 +515,7 @@ impl DownloadManagerBuilder {
                             *lock!(terminal) = Some(TerminalRecord {
                                 metadata: metadata.clone(),
                                 outcome: TerminalOutcome::Completed,
+                                error: None,
                             });
                             send!(sender, DownloadManagerSignal::Completed(metadata));
                         }
@@ -488,6 +524,7 @@ impl DownloadManagerBuilder {
                             *lock!(terminal) = Some(TerminalRecord {
                                 metadata: metadata.clone(),
                                 outcome: TerminalOutcome::Error,
+                                error: Some(e.to_string()),
                             });
                             send!(sender, DownloadManagerSignal::Error(metadata, e));
                         }
@@ -578,6 +615,8 @@ impl DownloadManagerBuilder {
 
         // The item may have been moved away from the front while the worker
         // was finishing, so remove it by metadata rather than popping the front.
+        self.report_activity(&meta, "Completed", None);
+        self.sessions.remove(&meta);
         self.remove_download(&meta).await;
 
         if self.user_paused {
@@ -612,6 +651,8 @@ impl DownloadManagerBuilder {
             download_agent.on_error(&self.app_handle, &error);
         }
 
+        self.report_activity(&meta, "Failed", Some(error.to_string()));
+        self.sessions.remove(&meta);
         self.remove_download(&meta).await;
 
         if self.user_paused {
@@ -632,8 +673,22 @@ impl DownloadManagerBuilder {
             // The hook persists DropData, which the worker may also write to.
             self.stop_and_wait_current_download().await;
 
+            let terminal_error = self.current_download.terminal_error_for(meta);
             let completed =
                 self.current_download.take_terminal_for(meta) == Some(TerminalOutcome::Completed);
+
+            self.report_activity(
+                meta,
+                if completed {
+                    "Completed"
+                } else if terminal_error.is_some() {
+                    "Failed"
+                } else {
+                    "Cancelled"
+                },
+                terminal_error,
+            );
+            self.sessions.remove(meta);
 
             // If completion won the race with cancellation, the game is already
             // installed. Never turn that into a partially-installed state.
@@ -653,8 +708,22 @@ impl DownloadManagerBuilder {
         else if let Some(download_agent) = self.download_agent_registry.get(meta).cloned() {
             let index = self.download_queue.get_by_meta(meta);
             if let Some(index) = index {
-                if self.current_download.take_terminal_for(meta) != Some(TerminalOutcome::Completed)
-                {
+                let terminal_error = self.current_download.terminal_error_for(meta);
+                let completed = self.current_download.take_terminal_for(meta)
+                    == Some(TerminalOutcome::Completed);
+                self.report_activity(
+                    meta,
+                    if completed {
+                        "Completed"
+                    } else if terminal_error.is_some() {
+                        "Failed"
+                    } else {
+                        "Cancelled"
+                    },
+                    terminal_error,
+                );
+                self.sessions.remove(meta);
+                if !completed {
                     download_agent.on_cancelled(&self.app_handle);
                 }
                 let _ = self.download_queue.edit().remove(index);
@@ -669,6 +738,31 @@ impl DownloadManagerBuilder {
         self.push_ui_queue_update();
         send!(self.sender, DownloadManagerSignal::Go);
     }
+    fn report_activity(&self, meta: &DownloadableMetadata, state: &str, error: Option<String>) {
+        let Some(session_id) = self.sessions.get(meta) else {
+            return;
+        };
+        let Some(agent) = self.download_agent_registry.get(meta) else {
+            return;
+        };
+        let event = crate::frontend_updates::DownloadActivityEvent {
+            session_id: session_id.clone(),
+            game_id: meta.id.clone(),
+            version_id: meta.version.clone(),
+            platform: format!("{:?}", meta.target_platform),
+            state: state.to_owned(),
+            occurred_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            bytes_downloaded: agent.dl_progress().sum(),
+            bytes_total: agent.dl_progress().get_max(),
+            error,
+        };
+        // Reporting is best-effort and must never fail the download manager.
+        let _ = tauri::Emitter::emit(&self.app_handle, "download_activity", event);
+    }
+
     fn push_ui_download_stats_update(&self, kbs: usize, time: usize) {
         let event_data = DownloadStatsUpdateEvent { speed: kbs, time };
         app_emit!(&self.app_handle, "update_stats", event_data);
@@ -917,6 +1011,7 @@ mod tests {
                 *lock!(terminal) = Some(TerminalRecord {
                     metadata: terminal_metadata,
                     outcome: TerminalOutcome::Completed,
+                    error: None,
                 });
             });
 
@@ -957,6 +1052,7 @@ mod tests {
                 *lock!(terminal) = Some(TerminalRecord {
                     metadata: terminal_metadata,
                     outcome: TerminalOutcome::Error,
+                    error: Some("test error".into()),
                 });
             });
 
@@ -968,6 +1064,10 @@ mod tests {
             });
 
             assert!(current_download.stop_and_wait(Duration::from_secs(1)).await);
+            assert_eq!(
+                current_download.terminal_error_for(&metadata).as_deref(),
+                Some("test error")
+            );
             assert!(
                 current_download.has_terminal(),
                 "an errored worker must not be re-queued by pause"
@@ -994,6 +1094,7 @@ mod tests {
                 *lock!(terminal) = Some(TerminalRecord {
                     metadata: worker_metadata,
                     outcome: TerminalOutcome::Completed,
+                    error: None,
                 });
                 let _ = finished_sender.send(());
             });
@@ -1030,6 +1131,7 @@ mod tests {
             *lock!(current_download.terminal) = Some(TerminalRecord {
                 metadata: completed.clone(),
                 outcome: TerminalOutcome::Completed,
+                error: None,
             });
 
             assert_eq!(

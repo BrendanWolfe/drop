@@ -3,6 +3,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::download_manager_frontend::{DownloadManagerStatus, DownloadStatus};
 
+/// Explicit lifecycle events: disappearance from a snapshot is not completion.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadActivityEvent {
+    pub session_id: String,
+    pub game_id: String,
+    pub version_id: String,
+    pub platform: String,
+    pub state: String,
+    pub occurred_at: u64,
+    pub bytes_downloaded: usize,
+    pub bytes_total: usize,
+    pub error: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct QueueUpdateEventQueueData {
     pub meta: DownloadableMetadata,

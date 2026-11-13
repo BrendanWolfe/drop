@@ -1442,6 +1442,7 @@ dependencies = [
  "throttle_my_fn",
  "tokio",
  "utils",
+ "uuid",
 ]
 
 [[package]]
@@ -1455,7 +1456,7 @@ dependencies = [
 
 [[package]]
 name = "drop-app"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "async-trait",

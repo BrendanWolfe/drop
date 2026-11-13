@@ -1,0 +1,44 @@
+// Snapshot names deliberately survive deletion/renaming of users, devices and games.
+model DownloadHistory {
+  id              String   @id @default(uuid())
+  clientId        String
+  sessionId       String
+  userId          String
+  userName        String
+  deviceName      String
+  gameId          String
+  gameTitle       String
+  versionId       String
+  platform        String
+  state           String
+  queuedAt        DateTime
+  startedAt       DateTime?
+  endedAt         DateTime?
+  updatedAt       DateTime
+  bytesDownloaded BigInt   @default(0)
+  bytesTotal      BigInt   @default(0)
+
+  @@unique([clientId, sessionId])
+  @@index([queuedAt, id])
+  @@index([userId, queuedAt])
+}
+
+model ClientErrorReport {
+  id            String   @id @default(uuid())
+  clientId      String
+  reportId      String
+  userId        String
+  userName      String
+  deviceName    String
+  source        String
+  message       String
+  details       String
+  gameId        String?
+  gameTitle     String?
+  clientVersion String
+  occurredAt    DateTime
+  receivedAt    DateTime @default(now())
+
+  @@unique([clientId, reportId])
+  @@index([receivedAt, id])
+}

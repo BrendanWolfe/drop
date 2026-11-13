@@ -29,8 +29,6 @@
       />
     </div>
 
-    <EmulatedBadge v-if="game?.isEmulated" class="absolute left-3 top-3" />
-
     <div
       v-if="showTitleDescription"
       class="absolute bottom-0 left-0 w-full p-3"

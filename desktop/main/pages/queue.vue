@@ -1,368 +1,427 @@
 <template>
-  <div class="bg-zinc-950 p-4 min-h-full space-y-4">
+  <div class="min-h-full space-y-6 bg-zinc-950 p-4">
     <div
-      class="h-16 overflow-hidden relative rounded-xl flex flex-row border border-zinc-900"
+      class="flex min-h-20 flex-wrap overflow-hidden rounded-xl bg-zinc-900 ring-1 ring-inset ring-white/5"
     >
       <div
-        class="bg-zinc-900 z-10 w-32 flex flex-col gap-x-2 font-display items-left justify-center pl-2"
+        class="flex w-36 shrink-0 flex-col justify-center px-4 py-3 font-display tabular-nums"
       >
-        <template v-if="isPaused">
-          <span class="font-bold text-amber-400">Paused</span>
-          <span class="text-xs text-zinc-400">Downloads paused</span>
-        </template>
-        <template v-else>
-          <span class="font-bold text-zinc-100"
-            >{{ formatKilobytes(displayStats.speed) }}B/s</span
-          >
-          <span class="text-xs text-zinc-400"
-            >{{ formatTime(displayStats.time) }} left</span
-          >
-        </template>
+        <span
+          class="font-bold"
+          :class="isPaused ? 'text-amber-300' : 'text-zinc-100'"
+          >{{
+            isPaused ? "Paused" : `${formatKilobytes(displayStats.speed)}B/s`
+          }}</span
+        >
+        <span class="mt-1 text-xs text-zinc-400">{{
+          isPaused
+            ? "Downloads paused"
+            : `${formatTime(displayStats.time)} left`
+        }}</span>
       </div>
+      <!-- The graph owns its own column; it can never sit behind the controls. -->
       <div
-        v-if="!isPaused"
-        class="absolute inset-0 h-full flex flex-row items-end justify-end space-x-[1px]"
+        class="relative min-w-12 flex-1 overflow-hidden bg-zinc-950/60"
         aria-hidden="true"
       >
         <div
-          v-for="bar in speedHistory"
-          :style="{ height: `${(bar / speedMax) * 100}%` }"
-          class="w-[3px] bg-blue-600 rounded-t-full"
-        />
+          v-if="!isPaused"
+          class="absolute inset-0 flex items-end justify-end gap-px px-2 pt-2"
+        >
+          <div
+            v-for="(bar, index) in speedHistory"
+            :key="index"
+            class="w-[3px] shrink-0 rounded-t bg-blue-500"
+            :style="{ height: `${(bar / speedMax) * 100}%` }"
+          />
+        </div>
       </div>
       <div
         v-if="showDownloadControls"
-        class="absolute inset-y-0 right-3 z-20 flex items-center"
+        class="flex shrink-0 items-center bg-zinc-900 p-3"
       >
         <button
           type="button"
           @click="toggleDownloads"
           :disabled="downloadControlPending"
           :aria-busy="downloadControlPending"
-          class="inline-flex items-center gap-x-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:bg-blue-600/50"
+          class="inline-flex min-h-10 items-center gap-2 rounded-md bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-950 shadow-sm hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400 disabled:cursor-wait disabled:opacity-50"
         >
           <PauseIcon
-            v-if="downloadControlAction === 'pause'"
+            v-if="!isPaused"
             class="size-4"
             aria-hidden="true"
-          />
-          <PlayIcon v-else class="size-4" aria-hidden="true" />
-          <span>{{ downloadControlLabel }}</span>
+          /><PlayIcon v-else class="size-4" aria-hidden="true" />
+          {{ downloadControlLabel }}
         </button>
       </div>
     </div>
-    <div
+
+    <p
       v-if="downloadControlError"
       role="alert"
-      class="rounded-md bg-red-500/15 p-4 outline outline-red-500/25"
+      class="rounded-lg bg-red-500/10 p-4 text-sm text-red-200"
     >
-      <div class="flex">
-        <div class="shrink-0">
-          <XCircleIcon class="size-5 text-red-400" aria-hidden="true" />
-        </div>
-        <div class="ml-3">
-          <h3 class="text-sm font-medium text-red-200">
-            Couldn't update downloads
-          </h3>
-          <p class="mt-1 text-sm text-red-200/80">
-            {{ downloadControlError }}
-          </p>
-        </div>
-      </div>
-    </div>
-    <draggable v-model="queue.queue" @end="onEnd">
-      <template #item="{ element }: ListIterable">
-        <li
-          v-if="games[element.meta.id]"
-          :key="`${element.meta.id}:${element.meta.version}:${element.meta.targetPlatform}`"
-          class="mb-4 bg-zinc-900 rounded-lg flex flex-row justify-between gap-x-6 py-5 px-4"
+      {{ downloadControlError }}
+    </p>
+
+    <section aria-labelledby="active-heading">
+      <div class="mb-3 flex items-baseline justify-between gap-4">
+        <h1
+          id="active-heading"
+          class="font-display text-lg font-semibold text-zinc-100"
         >
-          <div class="w-full flex items-center max-w-md gap-x-4 relative">
-            <img
-              class="size-24 flex-none bg-zinc-800 object-cover rounded"
-              :src="games[element.meta.id]!.cover"
-              alt=""
-            />
-            <div class="min-w-0 flex-auto">
-              <p class="text-xl font-semibold text-zinc-100">
-                <NuxtLink
-                  :href="
-                    element.meta.downloadType === 'Emulator'
-                      ? '/emulators'
-                      : element.meta.id.startsWith('local-')
-                        ? `/library/local/${element.meta.id}`
-                        : `/library/${element.meta.id}`
-                  "
-                  class=""
-                >
-                  <span class="absolute inset-x-0 -top-px bottom-0" />
-                  {{ games[element.meta.id]!.game.mName }}
-                </NuxtLink>
-                <span
-                  v-if="games[element.meta.id]!.game.type === 'Emulator'"
-                  class="ml-2 rounded bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-200"
-                  >Emulator</span
-                >
-              </p>
-              <p class="mt-1 flex text-xs/5 text-gray-500">
-                {{ games[element.meta.id]!.game.mShortDescription }}
-              </p>
-              <p
-                v-if="element.meta.downloadType === 'Emulator'"
-                class="mt-1 text-xs text-zinc-400"
-              >
-                {{ element.meta.version }} · {{ element.meta.targetPlatform }}
-              </p>
-            </div>
-          </div>
-          <div class="flex shrink-0 items-center gap-x-4">
-            <div class="hidden sm:flex sm:flex-col sm:items-end">
-              <p class="text-md text-zinc-500 uppercase font-display font-bold">
-                {{ element.status }}
-              </p>
-              <div
-                v-if="element.dl_progress"
-                class="mt-1 w-96 bg-zinc-800 rounded-lg overflow-hidden"
-              >
-                <div
-                  class="h-2 bg-blue-600"
-                  :style="{ width: `${element.dl_progress * 100}%` }"
-                />
-              </div>
-              <span
-                class="mt-2 inline-flex items-center gap-x-1 text-zinc-400 text-sm font-display"
-                ><span class="text-zinc-300"
-                  >{{ formatKilobytes(element.dl_current / 1000) }}B</span
-                >
-                /
-                <span class=""
-                  >{{ formatKilobytes(element.dl_max / 1000) }}B</span
-                ><CloudIcon class="size-5"
-              /></span>
-              <div
-                v-if="element.dl_max !== element.disk_max"
-                class="h-[1px] my-2 w-full bg-zinc-700"
-              />
-              <div
-                v-if="
-                  element.disk_progress && element.dl_max !== element.disk_max
-                "
-                class="mt-1 w-96 bg-zinc-800 rounded-lg overflow-hidden"
-              >
-                <div
-                  class="h-2 bg-blue-600"
-                  :style="{ width: `${element.disk_progress * 100}%` }"
-                />
-              </div>
-              <span
-                v-if="element.dl_max !== element.disk_max"
-                class="mt-2 inline-flex items-center gap-x-1 text-zinc-400 text-sm font-display"
-                ><span class="text-zinc-300"
-                  >{{ formatKilobytes(element.disk_current / 1000) }}B</span
-                >
-                /
-                <span class=""
-                  >{{ formatKilobytes(element.disk_max / 1000) }}B</span
-                ><ServerIcon class="size-5"
-              /></span>
-            </div>
-            <button @click="() => cancelGame(element.meta)" class="group">
-              <XMarkIcon
-                class="transition size-8 flex-none text-zinc-600 group-hover:text-zinc-300"
-                aria-hidden="true"
-              />
-            </button>
-          </div>
-        </li>
-        <li v-else class="mb-4 rounded-lg bg-zinc-900 p-4 text-zinc-300">
-          <p>
-            {{ element.meta.id }}
-            <span class="ml-2 text-sm text-zinc-500">{{
-              element.meta.version
-            }}</span>
-          </p>
-          <p class="mt-1 text-sm text-zinc-400">{{ element.status }}</p>
-          <p
-            v-if="metadataErrors[element.meta.id]"
-            role="alert"
-            class="mt-2 text-sm text-amber-200"
+          {{ isPaused ? "Paused download" : "Active download" }}
+        </h1>
+        <span class="text-xs text-zinc-500"
+          >Drop a queued download here to switch</span
+        >
+      </div>
+      <draggable
+        v-model="activeItems"
+        item-key="key"
+        :group="{ name: 'downloads', put: true }"
+        handle=".download-handle"
+        :sort="false"
+        :disabled="queueBusy"
+        data-slot="active"
+        class="min-h-36 rounded-xl bg-blue-500/5 p-2 ring-1 ring-inset ring-blue-400/20"
+        ghost-class="opacity-30"
+        @start="onDragStart"
+        @end="onDragEnd"
+      >
+        <template #item="{ element }">
+          <DownloadQueueCard
+            :item="element"
+            :title="title(element.meta)"
+            :cover="games[element.meta.id]?.cover"
+            :metadata-error="metadataErrors[element.meta.id]"
+            active
+            :paused="isPaused"
+            :disabled="queueBusy"
+            @cancel="cancelGame(element.meta)"
+          />
+        </template>
+        <template #footer
+          ><p
+            v-if="!activeItems.length"
+            class="px-4 py-10 text-center text-sm text-zinc-500"
           >
-            Could not load download details. The download is still in the queue.
-          </p>
-          <p v-else class="mt-2 text-sm text-zinc-400">
-            Loading download details…
-          </p>
-          <button
-            type="button"
-            class="mt-2 min-h-10 rounded-md bg-zinc-800 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
-            @click="cancelGame(element.meta)"
-          >
-            Cancel download
-          </button>
-        </li>
-      </template>
-    </draggable>
-    <div
-      class="text-zinc-600 uppercase font-semibold font-display w-full text-center"
-      v-if="queue.queue.length == 0"
+            No active download. Choose a game from your library to download.
+          </p></template
+        >
+      </draggable>
+    </section>
+
+    <section
+      aria-labelledby="queued-heading"
+      class="border-t border-zinc-800 pt-5"
     >
-      No items in the queue
-    </div>
+      <div class="mb-3 flex items-baseline justify-between gap-4">
+        <h2
+          id="queued-heading"
+          class="font-display text-sm font-semibold text-zinc-300"
+        >
+          Up next
+          <span class="ml-2 tabular-nums text-zinc-500">{{
+            Math.max(0, queue.queue.length - 1)
+          }}</span>
+        </h2>
+        <span class="text-xs text-zinc-500">Drag to reorder</span>
+      </div>
+      <draggable
+        v-model="waitingItems"
+        item-key="key"
+        group="downloads"
+        handle=".download-handle"
+        :disabled="queueBusy"
+        data-slot="waiting"
+        class="min-h-24 space-y-2"
+        ghost-class="opacity-30"
+        :animation="reducedMotion ? 0 : 150"
+        @start="onDragStart"
+        @end="onDragEnd"
+      >
+        <template #item="{ element, index }">
+          <DownloadQueueCard
+            :item="element"
+            :title="title(element.meta)"
+            :cover="games[element.meta.id]?.cover"
+            :metadata-error="metadataErrors[element.meta.id]"
+            :disabled="queueBusy"
+            :first="index === 0"
+            :last="index === waitingItems.length - 1"
+            @cancel="cancelGame(element.meta)"
+            @activate="requestMove(element.meta, 0)"
+            @move="moveWaiting(element.meta, $event)"
+          />
+        </template>
+        <template #footer
+          ><p
+            v-if="!waitingItems.length"
+            class="rounded-lg border border-dashed border-zinc-800 px-4 py-8 text-center text-sm text-zinc-500"
+          >
+            No downloads waiting.
+          </p></template
+        >
+      </draggable>
+    </section>
+
+    <ModalTemplate
+      :model-value="!!pendingSwitch"
+      @update:model-value="if (!$event) pendingSwitch = undefined;"
+    >
+      <template #default>
+        <DialogTitle class="font-display text-lg font-semibold text-zinc-100"
+          >Switch active download?</DialogTitle
+        >
+        <p class="mt-3 text-sm leading-6 text-zinc-400">
+          Move “{{ pendingSwitch ? title(pendingSwitch.meta) : "" }}”
+          {{
+            pendingSwitch?.newIndex === 0
+              ? "into the active slot"
+              : "back into the queue"
+          }}? The current download will stop and keep its progress.
+          {{
+            isPaused
+              ? "Downloads will remain paused."
+              : "The new active download will start now."
+          }}
+        </p>
+      </template>
+      <template #buttons>
+        <button
+          type="button"
+          class="min-h-10 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+          @click="confirmSwitch"
+        >
+          Switch download
+        </button>
+        <button
+          type="button"
+          class="min-h-10 rounded-md bg-zinc-800 px-4 py-2 text-sm text-zinc-100 hover:bg-zinc-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+          @click="pendingSwitch = undefined"
+        >
+          Keep current download
+        </button>
+      </template>
+    </ModalTemplate>
   </div>
 </template>
 
 <script setup lang="ts">
-import {
-  CloudIcon,
-  PauseIcon,
-  PlayIcon,
-  ServerIcon,
-  XCircleIcon,
-  XMarkIcon,
-} from "@heroicons/vue/20/solid";
+import { PauseIcon, PlayIcon } from "@heroicons/vue/20/solid";
 import { invoke } from "@tauri-apps/api/core";
-import { type DownloadableMetadata, type Game, type GameStatus } from "~/types";
-
-// const actionNames = {
-//   [GameStatusEnum.Downloading]: "downloading",
-//   [GameStatusEnum.Verifying]: "verifying",
-// }
-
-const windowWidth = ref(window.innerWidth);
-window.addEventListener("resize", (event) => {
-  windowWidth.value = window.innerWidth;
-});
+import { DialogTitle } from "@headlessui/vue";
+import type { DownloadableMetadata, Game } from "~/types";
+import { downloadKey, queueMove } from "~/utils/download-queue";
 
 const queue = useQueueState();
 const stats = useStatsState();
 const speedHistory = useDownloadHistory();
-const speedHistoryMax = computed(() => windowWidth.value / 4);
-const speedMax = computed(
-  () => speedHistory.value.reduce((a, b) => (a > b ? a : b)) * 1.1,
-);
-const previousGameId = useState<string | undefined>("previous_game");
-
+const speedMax = computed(() => Math.max(1, ...speedHistory.value) * 1.1);
+const reducedMotion = ref(false);
+onMounted(() => {
+  reducedMotion.value = window.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
+});
 const isPaused = computed(() => queue.value.status === "Paused");
 const displayStats = computed(() =>
   isPaused.value ? { speed: 0, time: 0 } : stats.value,
 );
-const showDownloadControls = computed(
-  () => queue.value.queue.length > 0 && queue.value.status !== "Error",
+const showDownloadControls = computed(() => queue.value.queue.length > 0);
+const downloadControlPending = ref(false);
+const downloadControlError = ref<string>();
+const downloadControlLabel = computed(() =>
+  downloadControlPending.value
+    ? "Updating…"
+    : isPaused.value
+      ? "Resume Downloads"
+      : "Pause Downloads",
 );
-
-const pendingDownloadAction = ref<"pause" | "resume" | undefined>(undefined);
-const downloadControlError = ref<string | undefined>(undefined);
-const downloadControlPending = computed(
-  () => pendingDownloadAction.value !== undefined,
-);
-const downloadControlAction = computed(
-  () => pendingDownloadAction.value ?? (isPaused.value ? "resume" : "pause"),
-);
-const downloadControlLabel = computed(() => {
-  if (pendingDownloadAction.value === "pause") return "Pausing...";
-  if (pendingDownloadAction.value === "resume") return "Resuming...";
-  return isPaused.value ? "Resume Downloads" : "Pause Downloads";
-});
 
 async function toggleDownloads() {
   if (downloadControlPending.value) return;
-
-  const action = isPaused.value ? "resume" : "pause";
-  const command = action === "resume" ? "resume_downloads" : "pause_downloads";
-  pendingDownloadAction.value = action;
+  downloadControlPending.value = true;
   downloadControlError.value = undefined;
-
+  const paused = isPaused.value;
   try {
-    await invoke(command);
-  } catch (e) {
-    downloadControlError.value = String(e);
-    console.error("Failed to update downloads:", e);
-    pendingDownloadAction.value = undefined;
+    await invoke(paused ? "resume_downloads" : "pause_downloads");
+    await waitForQueue(
+      () =>
+        !queue.value.queue.length ||
+        (paused
+          ? queue.value.status === "Downloading"
+          : queue.value.status === "Paused"),
+    );
+  } catch (error) {
+    controlError(error);
+  } finally {
+    downloadControlPending.value = false;
   }
 }
 
-type ListIterable = { element: (typeof queue.value.queue)[0] };
+function controlError(error: unknown) {
+  downloadControlError.value = String(error);
+  void invoke("report_client_error", {
+    source: "client",
+    message: String(error),
+    details: "Download queue control",
+  }).catch(() => {});
+}
 
-const games: Ref<{
-  [key: string]: { game: Game; status: Ref<GameStatus>; cover: string };
-}> = ref({});
+type Item = QueueState["queue"][number] & { key: string };
+const activeItems = ref<Item[]>([]);
+const waitingItems = ref<Item[]>([]);
+const dragging = ref(false);
+const saving = ref(false);
+const pendingSwitch = ref<{
+  meta: DownloadableMetadata;
+  newIndex: number;
+  front: DownloadableMetadata;
+}>();
+const queueBusy = computed(() => saving.value || !!pendingSwitch.value);
+let dragFront: DownloadableMetadata | undefined;
+
+function syncQueue() {
+  const items = queue.value.queue.map((item) => ({
+    ...item,
+    key: downloadKey(item.meta),
+  }));
+  activeItems.value = items.slice(0, 1);
+  waitingItems.value = items.slice(1);
+}
+function onDragStart() {
+  dragging.value = true;
+  dragFront = queue.value.queue[0]?.meta;
+}
+function onDragEnd(event: {
+  item: HTMLElement;
+  to: HTMLElement;
+  newIndex?: number;
+}) {
+  dragging.value = false;
+  const move = queueMove(
+    queue.value.queue,
+    event.item.dataset.downloadKey ?? "",
+    event.to.dataset.slot ?? "",
+    event.newIndex ?? -1,
+  );
+  syncQueue();
+  if (
+    !dragFront ||
+    downloadKey(queue.value.queue[0]?.meta ?? dragFront) !==
+      downloadKey(dragFront)
+  ) {
+    downloadControlError.value =
+      "The active download changed while dragging. Please try again.";
+    return;
+  }
+  if (move) requestMove(move.meta, move.newIndex);
+}
+function moveWaiting(meta: DownloadableMetadata, direction: number) {
+  const index = queue.value.queue.findIndex(
+    (item) => downloadKey(item.meta) === downloadKey(meta),
+  );
+  if (index + direction < 1) return;
+  requestMove(meta, index + direction);
+}
+function requestMove(meta: DownloadableMetadata, newIndex: number) {
+  if (queueBusy.value) return;
+  const front = queue.value.queue[0]?.meta;
+  const oldIndex = queue.value.queue.findIndex(
+    (item) => downloadKey(item.meta) === downloadKey(meta),
+  );
+  if (
+    !front ||
+    oldIndex < 0 ||
+    oldIndex === newIndex ||
+    newIndex >= queue.value.queue.length
+  )
+    return;
+  if (oldIndex === 0 || newIndex === 0)
+    pendingSwitch.value = { meta, newIndex, front };
+  else void saveMove(meta, newIndex, front);
+}
+async function confirmSwitch() {
+  const change = pendingSwitch.value;
+  pendingSwitch.value = undefined;
+  if (!change) return;
+  if (
+    downloadKey(queue.value.queue[0]?.meta ?? change.meta) !==
+    downloadKey(change.front)
+  ) {
+    downloadControlError.value =
+      "The active download changed. Please choose a download again.";
+    return;
+  }
+  await saveMove(change.meta, change.newIndex, change.front);
+}
+async function saveMove(
+  meta: DownloadableMetadata,
+  newIndex: number,
+  expectedFront: DownloadableMetadata,
+) {
+  saving.value = true;
+  downloadControlError.value = undefined;
+  try {
+    await invoke("move_queued_download", { meta, newIndex, expectedFront });
+    await waitForQueue(
+      () =>
+        downloadKey(queue.value.queue[newIndex]?.meta ?? expectedFront) ===
+        downloadKey(meta),
+    );
+  } catch (error) {
+    controlError(error);
+  } finally {
+    saving.value = false;
+    syncQueue();
+  }
+}
+
+// IPC resolves when a command is queued, not when the worker has stopped and
+// published the new order. Keep controls locked until authoritative state arrives.
+function waitForQueue(ready: () => boolean): Promise<void> {
+  if (ready()) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const stop = watch(queue, () => {
+      if (!ready()) return;
+      clearTimeout(timeout);
+      stop();
+      resolve();
+    });
+    const timeout = setTimeout(() => {
+      stop();
+      reject(new Error("The download queue did not update. Please try again."));
+    }, 10_000);
+  });
+}
+async function cancelGame(meta: DownloadableMetadata) {
+  try {
+    await invoke("cancel_game", { meta });
+  } catch (error) {
+    controlError(error);
+  }
+}
+
+const games = ref<Record<string, { game: Game; cover: string }>>({});
 const metadataErrors = ref<Record<string, boolean>>({});
 const loadingMetadata = new Set<string>();
-
-function resetHistoryGraph() {
-  speedHistory.value = [];
-  stats.value = { time: 0, speed: 0 };
+function title(meta: DownloadableMetadata) {
+  return games.value[meta.id]?.game.mName ?? meta.id;
 }
-function checkReset(v: QueueState) {
-  const currentGame = v.queue.at(0)?.meta.id;
-  // If we don't have a game
-  if (!currentGame) return;
-
-  // If we're finished
-  if (!currentGame && previousGameId.value) {
-    previousGameId.value = undefined;
-    resetHistoryGraph();
-    return;
-  }
-  // If we started a new download
-  if (currentGame && !previousGameId.value) {
-    previousGameId.value = currentGame;
-    resetHistoryGraph();
-    return;
-  }
-  // If it's a different game now
-  if (currentGame != previousGameId.value) {
-    previousGameId.value = currentGame;
-    resetHistoryGraph();
-    return;
-  }
-}
-watch(queue, (v) => {
-  loadGamesForQueue(v);
-  checkReset(v);
-});
-
-watch(stats, (v) => {
-  if (isPaused.value || v.speed == 0) return;
-  const newLength = speedHistory.value.push(v.speed);
-  if (newLength > speedHistoryMax.value) {
-    speedHistory.value.splice(0, newLength - speedHistoryMax.value);
-  }
-  checkReset(queue.value);
-});
-
-watch(
-  () => queue.value.status,
-  (status, previousStatus) => {
-    const pendingAction = pendingDownloadAction.value;
-    if (
-      status === "Empty" ||
-      status === "Error" ||
-      (pendingAction === "pause" && status === "Paused") ||
-      (pendingAction === "resume" && status === "Downloading")
-    ) {
-      pendingDownloadAction.value = undefined;
-    }
-
-    if (status === "Paused" || previousStatus === "Paused") {
-      speedHistory.value = [];
-      stats.value = { speed: 0, time: 0 };
-    }
-  },
-);
-
-function loadGamesForQueue(v: typeof queue.value) {
+function loadGames() {
   for (const {
     meta: { id },
-  } of v.queue) {
+  } of queue.value.queue) {
     if (games.value[id] || loadingMetadata.has(id) || metadataErrors.value[id])
       continue;
     loadingMetadata.add(id);
-    (async () => {
+    void (async () => {
       try {
-        const gameData = await useGame(id);
-        const cover = await useObject(gameData.game.mCoverObjectId);
-        games.value[id] = { ...gameData, cover };
+        const { game } = await useGame(id);
+        games.value[id] = { game, cover: await useObject(game.mCoverObjectId) };
       } catch {
         metadataErrors.value[id] = true;
       } finally {
@@ -371,34 +430,31 @@ function loadGamesForQueue(v: typeof queue.value) {
     })();
   }
 }
-
-loadGamesForQueue(queue.value);
-
-async function onEnd(event: { oldIndex: number; newIndex: number }) {
-  await invoke("move_download_in_queue", {
-    oldIndex: event.oldIndex,
-    newIndex: event.newIndex,
-  });
-}
-
-async function cancelGame(meta: DownloadableMetadata) {
-  await invoke("cancel_game", { meta });
-}
-
+watch(
+  queue,
+  (value, previous) => {
+    if (!dragging.value) syncQueue();
+    loadGames();
+    if (
+      value.queue[0]?.meta.id !== previous?.queue[0]?.meta.id ||
+      value.status !== previous?.status
+    ) {
+      speedHistory.value = [];
+      stats.value = { time: 0, speed: 0 };
+    }
+  },
+  { immediate: true },
+);
+watch(stats, (value) => {
+  if (isPaused.value || !value.speed) return;
+  speedHistory.value.push(value.speed);
+  if (speedHistory.value.length > 240) speedHistory.value.shift();
+});
 function formatTime(seconds: number): string {
-  if (seconds == 0) {
-    return `0s`;
-  }
-  if (seconds < 60) {
-    return `${Math.round(seconds)}s`;
-  }
-
+  if (seconds < 60) return `${Math.round(seconds)}s`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes}m ${Math.round(seconds % 60)}s`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
+  return minutes < 60
+    ? `${minutes}m ${Math.round(seconds % 60)}s`
+    : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 </script>

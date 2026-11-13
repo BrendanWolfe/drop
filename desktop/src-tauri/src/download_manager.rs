@@ -17,6 +17,17 @@ pub async fn move_download_in_queue(old_index: usize, new_index: usize) {
 }
 
 #[tauri::command]
+pub async fn move_queued_download(
+    meta: DownloadableMetadata,
+    new_index: usize,
+    expected_front: DownloadableMetadata,
+) {
+    DOWNLOAD_MANAGER
+        .rearrange_download(meta, new_index, expected_front)
+        .await;
+}
+
+#[tauri::command]
 pub async fn cancel_game(meta: DownloadableMetadata) {
     DOWNLOAD_MANAGER.cancel(meta).await;
 }

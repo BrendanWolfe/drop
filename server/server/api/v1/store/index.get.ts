@@ -9,6 +9,8 @@ import { getAgeRestrictionFilter } from "~/server/internal/utils/ageRestrictions
 import {
   emulationFilterSchema,
   getEmulationFilter,
+  getNameFilter,
+  nameSearchSchema,
 } from "~/server/internal/store/filters";
 
 const StoreRead = type({
@@ -22,6 +24,7 @@ const StoreRead = type({
   tags: "string?",
   platform: "string?",
   emulated: emulationFilterSchema.optional(),
+  q: nameSearchSchema.optional(),
 
   company: "string?",
   companyActions: "string = 'published,developed'",
@@ -132,6 +135,7 @@ export default defineEventHandler(async (h3) => {
     ...companyFilter,
     ...ageFilter,
     ...getEmulationFilter(options.emulated),
+    ...getNameFilter(options.q),
     type: GameType.Game,
   };
 

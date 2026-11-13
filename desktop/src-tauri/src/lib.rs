@@ -71,6 +71,7 @@ mod logging;
 mod local_games;
 mod steam;
 mod download_reporting;
+mod activity_reporting;
 mod scheduler;
 mod settings;
 mod updates;
@@ -120,6 +121,7 @@ async fn setup(handle: AppHandle) -> AppState {
 
     ProcessManagerWrapper::init(handle.clone());
     ::remote::proxy::initialize();
+    activity_reporting::start(&handle);
     DownloadManagerWrapper::init(handle.clone());
     download_reporting::start(&handle);
     app_updates::start(&handle);
@@ -244,6 +246,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Core utils
             fetch_state,
+            activity_reporting::report_client_error,
             quit,
             fetch_system_data,
             app_updates::desktop_update_status,
@@ -300,6 +303,7 @@ pub fn run() {
             download_game,
             resume_download,
             move_download_in_queue,
+            move_queued_download,
             pause_downloads,
             resume_downloads,
             cancel_game,

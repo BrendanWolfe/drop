@@ -24,6 +24,26 @@
       </div>
     </header>
 
+    <nav
+      class="flex flex-wrap gap-2"
+      :aria-label="t('clientActivity.navigation')"
+    >
+      <span
+        class="rounded-md bg-blue-500/10 px-4 py-2 text-sm font-medium text-blue-200 ring-1 ring-inset ring-blue-400/20"
+        >{{ t("clientActivity.live") }}</span
+      >
+      <NuxtLink
+        href="/admin/download-history"
+        class="rounded-md px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-white"
+        >{{ t("clientActivity.historyTitle") }}</NuxtLink
+      >
+      <NuxtLink
+        href="/admin/errors"
+        class="rounded-md px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800 hover:text-white"
+        >{{ t("clientActivity.errorsTitle") }}</NuxtLink
+      >
+    </nav>
+
     <section
       class="flex flex-wrap items-center gap-x-8 gap-y-4 rounded-xl border border-zinc-700/70 bg-zinc-950/40 px-5 py-4"
       :aria-label="t('adminDownloads.summary')"
