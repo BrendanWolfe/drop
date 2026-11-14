@@ -689,15 +689,10 @@
     </template>
   </ModalTemplate>
 
-  <!-- 
-  Dear future DecDuck,
-  This v-if is necessary for Vue rendering reasons
-  (it tries to access the game version for not installed games)
-  You have already tried to remove it
-  Don't.  
-  -->
+  <!-- Only initialize options when opened for a fully downloaded game. -->
   <GameOptionsModal
     v-if="
+      configureModalOpen &&
       status.type === 'Installed' &&
       (status.install_type.type == InstalledType.Installed ||
         status.install_type.type == InstalledType.SetupRequired)

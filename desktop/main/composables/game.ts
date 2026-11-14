@@ -9,7 +9,7 @@ import type {
 } from "~/types";
 
 const gameRegistry: {
-  [key: string]: { game: Game; version: Ref<GameVersion | undefined> };
+  [key: string]: { game: Game; version: Ref<GameVersion | null | undefined> };
 } = {};
 
 const gameStatusRegistry: { [key: string]: Ref<GameStatus> } = {};
@@ -30,7 +30,7 @@ export const useGame = async (gameId: string) => {
     const data: {
       game: Game;
       status: RawGameStatus;
-      version?: GameVersion;
+      version?: GameVersion | null;
     } = await invoke("fetch_game", {
       gameId,
     });
@@ -41,7 +41,7 @@ export const useGame = async (gameId: string) => {
       listen(`update_game/${gameId}`, (event) => {
         const payload: {
           status: RawGameStatus;
-          version?: GameVersion;
+          version?: GameVersion | null;
         } = event.payload as any;
         gameStatusRegistry[gameId]!.value = parseStatus(payload.status);
 

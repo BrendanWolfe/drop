@@ -1,7 +1,7 @@
 <template>
   <ModalTemplate size-class="max-w-4xl" v-model="open">
     <template #default>
-      <div class="flex flex-row gap-x-4 min-h-96">
+      <div v-if="configuration" class="flex flex-row gap-x-4 min-h-96">
         <nav class="flex flex-1 flex-col" aria-label="Sidebar">
           <ul role="list" class="-mx-2 space-y-1">
             <li v-for="(tab, tabIdx) in tabs" :key="tab.name">
@@ -58,6 +58,9 @@
           </div>
         </div>
       </div>
+      <p v-else role="status" class="text-sm text-zinc-400">
+        Game configuration is not available yet. Please try again shortly.
+      </p>
       <div v-if="saveError" class="mt-5 rounded-md bg-red-600/10 p-4">
         <div class="flex">
           <div class="flex-shrink-0">
@@ -75,6 +78,7 @@
       <LoadingButton
         @click="() => save()"
         :loading="saveLoading"
+        :disabled="!configuration || !game.version.value || saveLoading"
         type="submit"
         class="ml-2 w-full sm:w-fit"
       >
@@ -125,17 +129,26 @@ if (platform() === "windows") {
   }
 }
 
-const configuration: Ref<GameVersion["userConfiguration"]> = ref(
-  game.version.value!.userConfiguration,
+const configuration = ref<GameVersion["userConfiguration"]>();
+watch(
+  game.version,
+  (version) => {
+    // Keep edits local until Save, and tolerate missing version metadata.
+    configuration.value = version ? { ...version.userConfiguration } : undefined;
+  },
+  { immediate: true },
 );
 
-const hasWindows = !!(
-  game.version.value!.setups.find((v) => v.platform === "Windows") ??
-  game.version.value!.launches.find((v) => v.platform === "Windows")
+const hasWindows = computed(
+  () =>
+    !!(
+      game.version.value?.setups.some((v) => v.platform === "Windows") ||
+      game.version.value?.launches.some((v) => v.platform === "Windows")
+    ),
 );
 
-const protonEnabled = !!(
-  appState.value!.umuState !== "NotNeeded" && hasWindows
+const protonEnabled = computed(
+  () => appState.value?.umuState !== "NotNeeded" && hasWindows.value,
 );
 
 const tabs: Array<{ name: string; icon: Component; page: Component }> = [
@@ -159,6 +172,7 @@ const currentTabIndex = ref(0);
 const saveLoading = ref(false);
 const saveError = ref<undefined | string>();
 async function save() {
+  if (!configuration.value || !game.version.value || saveLoading.value) return;
   saveLoading.value = true;
   saveError.value = undefined;
   try {
