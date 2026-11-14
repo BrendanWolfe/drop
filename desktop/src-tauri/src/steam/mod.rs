@@ -263,6 +263,7 @@ pub fn steam_prefer(id: String, prefer: bool, app_handle: AppHandle) -> Result<(
 }
 #[tauri::command]
 pub async fn steam_play(id: String) -> Result<(), String> {
+    let _save_guard = crate::cloud_sync::launch_gate().await;
     tauri::async_runtime::spawn_blocking(move || {
         supported()?; let _lock=OPERATIONS.lock().map_err(|e|e.to_string())?;
         let db=borrow_db_checked(); let (key,_)=identity(&db,&id);

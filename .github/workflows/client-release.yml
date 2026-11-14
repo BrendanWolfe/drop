@@ -109,7 +109,7 @@ jobs:
           cache: pnpm
 
       - name: Test desktop release configuration
-        run: node --experimental-strip-types --test desktop/main/tests/desktop-release.test.ts
+        run: node --experimental-strip-types --test desktop/main/tests/desktop-release.test.ts desktop/main/tests/cloud-saves.test.ts
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
@@ -147,6 +147,10 @@ jobs:
       - name: Test startup authorization safety
         working-directory: desktop/src-tauri
         run: cargo test --locked -p remote --lib
+
+      - name: Test cloud save snapshots and conflicts
+        working-directory: desktop/src-tauri
+        run: cargo test --locked -p cloud_saves
 
       - name: Configure signed desktop updates
         id: updater-config

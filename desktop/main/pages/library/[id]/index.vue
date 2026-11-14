@@ -140,6 +140,15 @@
       <div class="mt-8 w-full bg-zinc-900 px-8">
         <div class="grid grid-cols-[2fr,1fr] gap-8">
           <div class="space-y-6">
+            <CloudSavePanel
+              v-if="
+                game.type === 'Game' &&
+                (status.type === 'Installed' || status.type === 'Running')
+              "
+              :key="game.id"
+              :game-id="game.id"
+              :running="status.type === 'Running'"
+            />
             <div class="bg-zinc-800/50 rounded-xl p-6 backdrop-blur-sm">
               <div
                 v-html="htmlDescription"

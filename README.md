@@ -35,6 +35,10 @@ Games hosted on your instance are free to add to your library and download throu
 
 The Store is available in both the web interface and the desktop app. Add games to your library from either interface, then use the desktop app to install and play them.
 
+## Cloud saves
+
+Cloud saves are opt-in per game in the admin dashboard and globally in the desktop client. See the [cloud save guide](desktop/CLOUD_SAVES.md) for directory configuration, synchronization behavior, limits, and recovery.
+
 ## Deployment
 
 See our documentation on how to [deploy Drop](https://droposs.org/docs/admin/quickstart) for more information.

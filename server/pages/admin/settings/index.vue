@@ -92,6 +92,7 @@
         {{ allowSave ? $t("common.save") : $t("common.saved") }}
       </LoadingButton>
     </form>
+    <CloudSaveStorageSettings />
   </div>
 </template>
 

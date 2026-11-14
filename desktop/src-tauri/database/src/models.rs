@@ -261,6 +261,9 @@ pub mod data {
             pub max_download_speed: u64,
             #[serde(default = "automatic_updates_enabled")]
             pub automatic_client_updates: bool,
+            /// One explicit opt-in for all supported games on this device.
+            #[serde(default)]
+            pub cloud_saves_enabled: bool,
             pub force_offline: bool, // ... other settings ...
         }
         impl Default for Settings {
@@ -270,6 +273,7 @@ pub mod data {
                     max_download_threads: 4,
                     max_download_speed: 0,
                     automatic_client_updates: true,
+                    cloud_saves_enabled: false,
                     force_offline: false,
                 }
             }
@@ -536,6 +540,18 @@ pub mod data {
         #[test]
         fn settings_default_speed_is_unlimited() {
             assert_eq!(Settings::default().max_download_speed, 0);
+        }
+
+        #[test]
+        fn cloud_saves_require_an_explicit_global_opt_in_including_legacy_settings() {
+            assert!(!Settings::default().cloud_saves_enabled);
+            let legacy: Settings = ron::from_str(
+                "(autostart:false,maxDownloadThreads:4,forceOffline:false)",
+            ).unwrap();
+            assert!(!legacy.cloud_saves_enabled);
+            let enabled = Settings { cloud_saves_enabled: true, ..Settings::default() };
+            let decoded: Settings = ron::from_str(&ron::to_string(&enabled).unwrap()).unwrap();
+            assert!(decoded.cloud_saves_enabled);
         }
 
         #[test]

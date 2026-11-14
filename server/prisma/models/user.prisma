@@ -20,6 +20,7 @@ model User {
     sessions Session[]
 
     saves       SaveSlot[]
+    cloudSaveHeads CloudSaveHead[]
     screenshots Screenshot[]
     playtime    Playtime[]
 

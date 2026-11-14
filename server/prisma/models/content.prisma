@@ -22,6 +22,10 @@ model Game {
   created        DateTime       @default(now())
 
   type GameType @default(Game)
+  cloudSavesEnabled Boolean @default(false)
+  cloudSaveRevision Int @default(0)
+  cloudSaveConfig CloudSaveConfig?
+  cloudSaveHeads CloudSaveHead[]
   isEmulated Boolean @default(false)
   consoleTypeId String?
   consoleType ConsoleType? @relation(fields: [consoleTypeId], references: [id], onDelete: SetNull, onUpdate: Cascade)

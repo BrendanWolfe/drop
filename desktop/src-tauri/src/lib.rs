@@ -58,6 +58,7 @@ use url::Url;
 use utils::app_emit;
 
 mod client;
+mod cloud_sync;
 mod app_updates;
 mod collections;
 mod download_manager;
@@ -125,6 +126,7 @@ async fn setup(handle: AppHandle) -> AppState {
     DownloadManagerWrapper::init(handle.clone());
     download_reporting::start(&handle);
     app_updates::start(&handle);
+    cloud_sync::start(&handle);
 
     debug!("checking if database is set up");
     let is_set_up = DB.database_is_set_up();
@@ -228,6 +230,14 @@ pub fn run() {
             // User utils
             update_settings,
             fetch_settings,
+            cloud_sync::set_cloud_saves_enabled,
+            cloud_sync::fetch_cloud_save_status,
+            cloud_sync::upload_cloud_save,
+            cloud_sync::restore_cloud_save,
+            cloud_sync::recover_cloud_save,
+            cloud_sync::open_cloud_save_recovery,
+            cloud_sync::restore_local_save_backup,
+            cloud_sync::retry_cloud_save_restore,
             // Auth
             auth_initiate,
             auth_initiate_code,

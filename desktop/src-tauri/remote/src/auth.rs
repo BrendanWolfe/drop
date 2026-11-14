@@ -79,7 +79,7 @@ pub fn generate_authorization_header() -> Result<String, RemoteAccessError> {
     authorization_header_for(certs.as_ref())
 }
 
-fn authorization_header_for(certs: Option<&DatabaseAuth>) -> Result<String, RemoteAccessError> {
+pub fn authorization_header_for(certs: Option<&DatabaseAuth>) -> Result<String, RemoteAccessError> {
     let certs = certs.ok_or(RemoteAccessError::AuthenticationRequired)?;
     let system_time: usize = SystemTime::now()
         .duration_since(UNIX_EPOCH)

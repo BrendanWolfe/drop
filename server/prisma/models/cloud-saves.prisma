@@ -1,0 +1,44 @@
+model CloudSaveConfig {
+  gameId String @id
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  locations Json @default("[]")
+}
+
+// A separate history for incompatible save formats (native platforms by default).
+model CloudSaveHead {
+  id String @id @default(uuid())
+  gameId String
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  namespace String
+  revision Int @default(0)
+  snapshots CloudSaveSnapshot[]
+
+  @@unique([gameId, userId, namespace], name: "owner")
+}
+
+model CloudSaveSnapshot {
+  id String @id
+  headId String
+  head CloudSaveHead @relation(fields: [headId], references: [id], onDelete: Cascade)
+  revision Int
+  definitionRevision Int
+  clientId String
+  kind String
+  objectId String @unique
+  checksum String
+  contentHash String
+  bytes Int
+  createdAt DateTime @default(now())
+
+  @@unique([headId, revision])
+}
+
+// Survives failed storage deletes; a subsequent request retries reclamation.
+model CloudSaveGarbage {
+  objectId String @id
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

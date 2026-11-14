@@ -1,6 +1,6 @@
 [package]
 name = "drop-app"
-version = "0.4.12"
+version = "0.4.13"
 description = "The client application for the open-source, self-hosted game distribution platform Drop"
 authors = ["Drop OSS"]
 edition = "2024"
@@ -39,6 +39,7 @@ bytes = "1.10.1"
 cacache = "13.1.0"
 chrono = "0.4.38"
 client = { path = "./client", version = "0.1.0" } # client
+cloud_saves = { path = "./cloud_saves" }
 database = { path = "./database" } # database
 deranged = "=0.4.0"
 dirs = "6.0.0"
@@ -84,6 +85,7 @@ semver = "1"
 serde_json = "1"
 serde_with = "3.12.0"
 sha1 = "0.10.6"
+sha2 = "0.10.9"
 shared_child = "1.0.1"
 slice-deque = "0.3.0"
 sysinfo = "0.36.1"
@@ -131,7 +133,7 @@ features = ["protocol-asset", "tray-icon", "unstable"]
 
 [dependencies.tokio]
 version = "1.40.0"
-features = ["rt", "signal", "tokio-macros"]
+features = ["rt", "signal", "tokio-macros", "fs", "io-util", "sync", "time"]
 
 [dependencies.uuid]
 version = "1.10.0"

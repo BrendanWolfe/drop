@@ -29,7 +29,8 @@ pub enum LaunchResult {
 }
 
 #[tauri::command]
-pub fn launch_game(id: String, index: usize) -> Result<LaunchResult, ProcessError> {
+pub async fn launch_game(id: String, index: usize) -> Result<LaunchResult, ProcessError> {
+    let _save_guard = crate::cloud_sync::launch_gate().await;
     let result = {
         let mut process_manager_lock = PROCESS_MANAGER.lock();
 

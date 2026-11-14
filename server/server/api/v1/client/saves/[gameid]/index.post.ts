@@ -2,6 +2,7 @@ import { ClientCapabilities } from "~/prisma/client/enums";
 import { defineClientEventHandler } from "~/server/internal/clients/event-handler";
 import { applicationSettings } from "~/server/internal/config/application-configuration";
 import prisma from "~/server/internal/db/database";
+import { requireCloudSaveAccess } from "~/server/internal/cloud-saves/access";
 
 export default defineClientEventHandler(
   async (h3, { fetchClient, fetchUser }) => {
@@ -25,6 +26,7 @@ export default defineClientEventHandler(
     });
     if (!game)
       throw createError({ statusCode: 400, statusMessage: "Invalid game ID" });
+    await requireCloudSaveAccess(gameId, user);
 
     const saves = await prisma.saveSlot.findMany({
       where: {

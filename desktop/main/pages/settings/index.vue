@@ -32,6 +32,7 @@
     </div>
   </div>
   <ClientUpdateSettings />
+  <CloudSaveSettings />
 </template>
 
 <script setup lang="ts">

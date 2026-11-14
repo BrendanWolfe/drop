@@ -1,6 +1,10 @@
 import prisma from "~/server/internal/db/database";
 import objectHandler from "~/server/internal/objects";
 import { defineDropTask } from "..";
+import {
+  cleanSaveGarbage,
+  protectedCloudSaveObjects,
+} from "~/server/internal/cloud-saves/storage";
 
 type FieldReferenceMap = {
   [modelName: string]: {
@@ -17,9 +21,11 @@ export default defineDropTask({
   taskGroup: "cleanup:objects",
   async run({ progress, logger }) {
     logger.info("Cleaning unreferenced objects");
+    await cleanSaveGarbage(1000);
 
     // get all objects
     const objects = await objectHandler.listAll();
+    const protectedCloudObjects = await protectedCloudSaveObjects();
     logger.info(`searching for ${objects.length} objects`);
     progress(30);
 
@@ -30,7 +36,10 @@ export default defineDropTask({
       `Found ${Object.keys(refMap).length} models with reference fields`,
     );
     logger.info("Searching for unreferenced objects");
-    const unrefedObjects = await findUnreferencedStrings(objects, refMap);
+    const unrefedObjects = await findUnreferencedStrings(
+      objects.filter((id) => !protectedCloudObjects.has(id)),
+      refMap,
+    );
     logger.info(`found ${unrefedObjects.length} Unreferenced objects`);
     // logger.info(unrefedObjects);
     progress(60);
