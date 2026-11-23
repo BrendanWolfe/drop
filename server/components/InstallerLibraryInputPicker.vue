@@ -307,6 +307,8 @@ async function browse(folder: string, search = "") {
 </script>
 
 <style scoped>
+@reference "../assets/tailwindcss.css";
+
 .field {
   @apply min-h-10 min-w-0 rounded-md border-zinc-700 bg-zinc-950 text-sm text-zinc-100;
 }
