@@ -51,6 +51,7 @@ export type Collection = {
 };
 
 export type GameVersion = {
+  locateAfterSetup?: boolean;
   userConfiguration: {
     launchTemplate: string;
     overrideProtonPath: string;
@@ -60,6 +61,8 @@ export type GameVersion = {
   setups: Array<{ platform: string }>;
   launches: Array<{ platform: string }>;
 };
+
+export type InstallerLocation = { root: string; launcher: string };
 
 export type InstalledEmulator = {
   gameId: string;

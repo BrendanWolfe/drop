@@ -82,12 +82,20 @@
             @resume="() => resumeDownload()"
             @update="repairEmulators"
             @verify="integrityOpen = true"
+            @locate="locateOpen = true"
+            @rerun-installer="rerunInstaller"
+            :installer-package="
+              installerPackage &&
+              status.type === 'Installed' &&
+              status.install_type.type !== InstalledType.PartiallyInstalled
+            "
+            :locate-required="installerPackage && !installerLocation"
             :show-verify="game.type !== 'Emulator'"
             :requires-update="
               missingEmulators.length > 0 || Boolean(dependencyCheckError)
             "
             :updating-dependencies="dependencyDownloadActive"
-            :checking-dependencies="checkingDependencies"
+            :checking-dependencies="checkingDependencies || checkingLocation"
             :status="status"
           />
           <button
@@ -116,6 +124,27 @@
           </NuxtLink>
         </div>
         <p
+          v-if="
+            installerPackage &&
+            status.type === 'Installed' &&
+            status.install_type.type === InstalledType.SetupRequired
+          "
+          class="mt-3 text-sm text-zinc-400"
+        >
+          In the installer, choose a folder separate from the downloaded
+          installer files.
+        </p>
+        <InstallerCompanionFiles
+          v-if="
+            installerPackage &&
+            (status.type === 'Running' ||
+              (status.type === 'Installed' &&
+                status.install_type.type !== InstalledType.PartiallyInstalled))
+          "
+          :game-id="id"
+          :running="status.type === 'Running'"
+        />
+        <p
           v-if="dependencyCheckError"
           role="alert"
           class="mt-3 text-sm text-red-300"
@@ -124,6 +153,7 @@
         </p>
         <SteamActions
           v-if="
+            !installerPackage &&
             !missingEmulators.length &&
             !dependencyCheckError &&
             !checkingDependencies
@@ -143,6 +173,7 @@
             <CloudSavePanel
               v-if="
                 game.type === 'Game' &&
+                !installerPackage &&
                 (status.type === 'Installed' || status.type === 'Running')
               "
               :key="game.id"
@@ -772,6 +803,13 @@
     v-if="dependencyRequiredModal"
     v-model="dependencyRequiredModal"
   />
+  <LocateInstallerGameModal
+    v-if="locateOpen"
+    v-model="locateOpen"
+    :game-id="id"
+    :location="installerLocation"
+    @saved="installerLocation = $event"
+  />
 </template>
 
 <script setup lang="ts">
@@ -808,6 +846,7 @@ import {
   InstalledType,
   type InstalledEmulator,
   type InstallLocations,
+  type InstallerLocation,
 } from "~/types";
 import { renderGameDescription } from "~/utils/game-description";
 import { canStartStoreDownload } from "~/utils/store-download";
@@ -830,6 +869,38 @@ const router = useRouter();
 const id = route.params.id.toString();
 
 const { game, status, version } = await useGame(id);
+const installerPackage = computed(() => !!version.value?.locateAfterSetup);
+const installerLocation = ref<InstallerLocation | null>(null);
+const checkingLocation = ref(false);
+const locateOpen = ref(false);
+let locationRequest = 0;
+async function refreshInstallerLocation() {
+  const request = ++locationRequest;
+  if (
+    !installerPackage.value ||
+    status.value.type !== "Installed" ||
+    status.value.install_type.type !== InstalledType.Installed
+  ) {
+    checkingLocation.value = false;
+    installerLocation.value = null;
+    return;
+  }
+  checkingLocation.value = true;
+  try {
+    const location = await invoke<InstallerLocation | null>(
+      "fetch_installer_location",
+      { id },
+    );
+    if (request === locationRequest) installerLocation.value = location;
+  } catch {
+    if (request === locationRequest) installerLocation.value = null;
+  } finally {
+    if (request === locationRequest) checkingLocation.value = false;
+  }
+}
+watch([installerPackage, status], refreshInstallerLocation, {
+  immediate: true,
+});
 const {
   missing: missingEmulators,
   loading: checkingDependencies,
@@ -1071,6 +1142,7 @@ async function launch(direct = false) {
   }
   if (
     !direct &&
+    !installerPackage.value &&
     status.value.type === "Installed" &&
     status.value.install_type.type === InstalledType.Installed
   ) {
@@ -1118,6 +1190,11 @@ async function launch(direct = false) {
       "get_launch_options",
       { id: game.id },
     );
+    if (installerPackage.value && !fetchedLaunchOptions.length) {
+      await refreshInstallerLocation();
+      locateOpen.value = true;
+      return;
+    }
     if (fetchedLaunchOptions.length == 1) {
       await launchIndex(0);
       return;
@@ -1168,6 +1245,22 @@ async function launchIndex(index: number) {
   }
 }
 
+async function rerunInstaller() {
+  try {
+    await invoke("rerun_installer", { id });
+  } catch (cause) {
+    createModal(
+      ModalType.Notification,
+      {
+        title: "Couldn't run the installer",
+        description: String(cause),
+        buttonText: "Close",
+      },
+      (e, close) => close(),
+    );
+  }
+}
+
 async function queue() {
   router.push("/queue");
 }
@@ -1212,7 +1305,9 @@ async function openGameFolder() {
   if (gameStatus?.type !== "Installed") return;
 
   try {
-    await invoke("open_fs", { path: gameStatus.install_dir });
+    await invoke("open_fs", {
+      path: installerLocation.value?.root ?? gameStatus.install_dir,
+    });
   } catch (e) {
     createModal(
       ModalType.Notification,

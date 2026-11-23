@@ -37,6 +37,8 @@ pub struct VersionDownloadOption {
     version_path: String,
     pub platform: Platform,
     #[serde(default)]
+    pub installer_package: bool,
+    #[serde(default)]
     installed_platform: Option<Platform>,
     #[serde(default)]
     proton_compatible: bool,

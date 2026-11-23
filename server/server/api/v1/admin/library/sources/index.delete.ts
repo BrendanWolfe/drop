@@ -3,6 +3,7 @@ import { readDropValidatedBody, throwingArktype } from "~/server/arktype";
 import aclManager from "~/server/internal/acls";
 import prisma from "~/server/internal/db/database";
 import libraryManager from "~/server/internal/library";
+import { removeInstallerBundles } from "~/server/internal/library/installer-bundles";
 
 const DeleteLibrarySource = type({
   id: "string",
@@ -18,14 +19,20 @@ export default defineEventHandler<{ body: typeof DeleteLibrarySource.infer }>(
 
     const body = await readDropValidatedBody(h3, DeleteLibrarySource);
 
-    const { count } = await prisma.library.deleteMany({
-      where: {
-        id: body.id,
-      },
-    });
+    const [bundles, { count }] = await prisma.$transaction([
+      prisma.gameVersion.findMany({
+        where: {
+          game: { libraryId: body.id },
+          installerBundleId: { not: null },
+        },
+        select: { installerBundleId: true },
+      }),
+      prisma.library.deleteMany({ where: { id: body.id } }),
+    ]);
     if (count == 0)
       throw createError({ statusCode: 404, message: "Library not found." });
 
     libraryManager.removeLibrary(body.id);
+    await removeInstallerBundles(bundles);
   },
 );

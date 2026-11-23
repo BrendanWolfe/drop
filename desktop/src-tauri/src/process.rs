@@ -53,6 +53,12 @@ pub async fn launch_game(id: String, index: usize) -> Result<LaunchResult, Proce
 }
 
 #[tauri::command]
+pub async fn rerun_installer(id: String) -> Result<(), ProcessError> {
+    let _guard = crate::cloud_sync::launch_gate().await;
+    PROCESS_MANAGER.lock().rerun_installer(id)
+}
+
+#[tauri::command]
 pub fn kill_game(game_id: String) -> Result<(), ProcessError> {
     Ok(PROCESS_MANAGER.lock().kill_game(game_id)?)
 }

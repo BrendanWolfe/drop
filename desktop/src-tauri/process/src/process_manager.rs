@@ -37,6 +37,7 @@ pub struct RunningProcess {
     handle: Arc<SharedChild>,
     start: SystemTime,
     manually_killed: bool,
+    installer: bool,
 }
 
 pub struct ProcessManager<'a> {
@@ -174,6 +175,7 @@ impl ProcessManager<'_> {
 
         let current_state = db_handle.applications.game_statuses.get_mut(&game_id);
         if let Some(GameDownloadStatus::Installed { install_type, .. }) = current_state
+            && !process.manually_killed
             && let Ok(exit_code) = result
             && exit_code.success()
         {
@@ -201,7 +203,8 @@ impl ProcessManager<'_> {
         // Or if the status isn't 0
         // Or if it's an error
         if !process.manually_killed
-            && (elapsed.as_secs() <= 2 || result.map_or(true, |r| !r.success()))
+            && ((!process.installer && elapsed.as_secs() <= 2)
+                || result.map_or(true, |r| !r.success()))
         {
             warn!("drop detected that the game {game_id} may have failed to launch properly");
             let _ = self.app_handle.emit("launch_external_error", &game_id);
@@ -221,6 +224,10 @@ impl ProcessManager<'_> {
             Some(version_data.clone()),
             status,
         );
+
+        if process.installer {
+            return Ok(());
+        }
 
         let elapsed_seconds = elapsed.as_secs();
         if let Some(local) = db_handle.applications.local_games.get_mut(&game_id) {
@@ -362,6 +369,18 @@ impl ProcessManager<'_> {
             .get(&meta.version)
             .ok_or(ProcessError::InvalidVersion)?;
 
+        if game_version.locate_after_setup {
+            return Ok(
+                if crate::resolution::located_installer_game(&db_lock, &meta).is_some() {
+                    vec![LaunchOption {
+                        name: "Play".into(),
+                    }]
+                } else {
+                    vec![]
+                },
+            );
+        }
+
         let launch_options = game_version
             .launches
             .iter()
@@ -379,6 +398,19 @@ impl ProcessManager<'_> {
         &mut self,
         game_id: String,
         launch_process_index: usize,
+    ) -> Result<(), ProcessError> {
+        self.launch_game_action(game_id, launch_process_index, false)
+    }
+
+    pub fn rerun_installer(&mut self, game_id: String) -> Result<(), ProcessError> {
+        self.launch_game_action(game_id, 0, true)
+    }
+
+    fn launch_game_action(
+        &mut self,
+        game_id: String,
+        launch_process_index: usize,
+        rerun_installer: bool,
     ) -> Result<(), ProcessError> {
         if self.processes.contains_key(&game_id) {
             return Err(ProcessError::AlreadyRunning);
@@ -433,6 +465,36 @@ impl ProcessManager<'_> {
             .get(version_name)
             .ok_or(ProcessError::InvalidVersion)?;
 
+        if rerun_installer && !game_version.locate_after_setup {
+            return Err(ProcessError::InvalidArguments(
+                "This version is not an installer package.".into(),
+            ));
+        }
+        let run_setup = rerun_installer
+            || matches!(
+                game_status,
+                GameDownloadStatus::Installed {
+                    install_type: InstalledGameType::SetupRequired,
+                    ..
+                }
+            );
+        let installer = run_setup && game_version.locate_after_setup;
+        let location = if !run_setup && game_version.locate_after_setup {
+            Some(
+                crate::resolution::located_installer_game(&db_lock, &meta).ok_or_else(|| {
+                    ProcessError::InvalidArguments(
+                        "Locate the installed game and its executable before playing.".into(),
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
+        let game_root = location
+            .as_ref()
+            .map(|location| location.root.to_string_lossy().into_owned());
+        let install_dir = game_root.as_ref().unwrap_or(install_dir);
+
         if let Some(local) = db_lock.applications.local_games.get(&game_id)
             && !local.launcher.as_ref().is_some_and(|path| path.is_file())
         {
@@ -484,40 +546,34 @@ impl ProcessManager<'_> {
             })?;
         debug!("using process handler {:?}", process_handler.id());
 
-        let (target_command, emulator) = match game_status {
-            GameDownloadStatus::Installed {
-                install_type: InstalledGameType::Installed,
-                ..
-            } => {
-                let (_, launch_config) = game_version
-                    .launches
-                    .iter()
-                    .filter(|v| v.platform == target_platform)
-                    .filter(|v| v.platform.can_run_on(Platform::HOST, v.proton_compatible))
-                    .enumerate()
-                    .find(|(i, _)| *i == launch_process_index)
-                    .ok_or(ProcessError::NotInstalled)?;
-                (
-                    launch_config.command.clone(),
-                    launch_config.emulator.as_ref(),
-                )
-            }
-            GameDownloadStatus::Installed {
-                install_type: InstalledGameType::SetupRequired,
-                ..
-            } => {
-                let setup_config = game_version
-                    .setups
-                    .iter()
-                    .find(|v| {
-                        v.platform == target_platform
-                            && v.platform.can_run_on(Platform::HOST, v.proton_compatible)
-                    })
-                    .ok_or(ProcessError::NotInstalled)?;
-
-                (setup_config.command.clone(), None)
-            }
-            _ => unreachable!("Game registered as 'Partially Installed'"),
+        let (target_command, emulator) = if run_setup {
+            let setup_config = game_version
+                .setups
+                .iter()
+                .find(|v| {
+                    v.platform == target_platform
+                        && v.platform.can_run_on(Platform::HOST, v.proton_compatible)
+                })
+                .ok_or(ProcessError::NotInstalled)?;
+            (setup_config.command.clone(), None)
+        } else if let Some(location) = &location {
+            (
+                ParsedCommand::for_file(&location.launcher, "", target_platform)?.reconstruct(),
+                None,
+            )
+        } else {
+            let (_, launch_config) = game_version
+                .launches
+                .iter()
+                .filter(|v| v.platform == target_platform)
+                .filter(|v| v.platform.can_run_on(Platform::HOST, v.proton_compatible))
+                .enumerate()
+                .find(|(i, _)| *i == launch_process_index)
+                .ok_or(ProcessError::NotInstalled)?;
+            (
+                launch_config.command.clone(),
+                launch_config.emulator.as_ref(),
+            )
         };
 
         let target_command = ParsedCommand::parse(target_command)?;
@@ -608,13 +664,21 @@ impl ProcessManager<'_> {
             target_launch_string,
             install_dir,
             game_version,
-            emulator_working_directory.as_deref().or_else(|| {
-                db_lock
-                    .applications
-                    .local_games
-                    .get(&meta.id)
-                    .map(|local| local.working_directory.as_path())
-            }),
+            emulator_working_directory
+                .as_deref()
+                .or_else(|| {
+                    location
+                        .as_ref()
+                        .and_then(|location| location.launcher.parent())
+                })
+                .or_else(|| installer.then(|| Path::new(install_dir)))
+                .or_else(|| {
+                    db_lock
+                        .applications
+                        .local_games
+                        .get(&meta.id)
+                        .map(|local| local.working_directory.as_path())
+                }),
         )?;
         let launch_parameters = resolved.command;
         launch_parameters.ensure_executable()?;
@@ -670,6 +734,7 @@ impl ProcessManager<'_> {
                 handle: wait_thread_handle,
                 start: SystemTime::now(),
                 manually_killed: false,
+                installer,
             },
         );
         spawn(move || {

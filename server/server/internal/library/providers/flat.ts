@@ -39,6 +39,10 @@ export class FlatFilesystemProvider implements LibraryProvider<
     return this.myId;
   }
 
+  filesystemRoot() {
+    return this.config.baseDir;
+  }
+
   /**
    * These are basically our versions, but also our games.
    * @returns list of valid games

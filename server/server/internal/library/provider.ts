@@ -15,6 +15,8 @@ export abstract class LibraryProvider<CFG> {
    */
   abstract id(): string;
 
+  abstract filesystemRoot(): string;
+
   /**
    * @returns list of (usually) top-level game folder names
    */

@@ -11,6 +11,7 @@ import { castManifest } from "../../library/manifest/utils";
 import { LibraryBackend } from "~/prisma/client/client";
 import { create, fromBinary } from "@bufbuild/protobuf";
 import prisma from "../../db/database";
+import { installerBundleRoot } from "../../library/installer-bundles";
 import { defineQueryProcessor } from "./utils";
 import {
   DropBoundType,
@@ -29,6 +30,7 @@ export default defineQueryProcessor({
       select: {
         dropletManifest: true,
         versionPath: true,
+        installerBundleId: true,
         game: {
           select: {
             library: true,
@@ -80,12 +82,22 @@ export default defineQueryProcessor({
             ]),
           ),
         }),
-        source: create(VersionResponse_LibrarySourceSchema, {
-          options: JSON.stringify(version.game.library.options),
-          id: version.game.library.id,
-          backend: mapEnum(version.game.library.backend),
-        }),
-        libraryPath: version.game.libraryPath,
+        source: create(
+          VersionResponse_LibrarySourceSchema,
+          version.installerBundleId
+            ? {
+                options: JSON.stringify({ baseDir: installerBundleRoot() }),
+                id: version.game.library.id,
+                backend:
+                  VersionResponse_LibrarySource_LibraryBackend.FLAT_FILESYSTEM,
+              }
+            : {
+                options: JSON.stringify(version.game.library.options),
+                id: version.game.library.id,
+                backend: mapEnum(version.game.library.backend),
+              },
+        ),
+        libraryPath: version.installerBundleId ?? version.game.libraryPath,
         versionPath: version.versionPath!,
       }),
     };

@@ -40,6 +40,7 @@ let version = {
   negativeFileList: [],
   gameId: "game",
   dropletManifest: JSON.stringify(archive),
+  installerBundleId: null as string | null,
 };
 let base: typeof version | null = null;
 const findUnique = mock.fn(async () => version);
@@ -122,4 +123,36 @@ test("normal deltas cannot use archive packages as their base", async () => {
     createDownloadManifestDetails("version"),
     /Delta updates cannot be applied to archive/,
   );
+});
+
+test("installer manifests select both the setup executable and its companion file", async () => {
+  cache.clear();
+  version = {
+    ...version,
+    delta: false,
+    fileList: ["Setup.exe", "data.bin"],
+    installerBundleId: "installer-bundle",
+    dropletManifest: JSON.stringify({
+      version: "2",
+      size: 100,
+      key: [],
+      chunks: {
+        chunk: {
+          checksum: "hash",
+          iv: [],
+          files: [
+            { filename: "Setup.exe", start: 0, length: 40, permissions: 493 },
+            { filename: "data.bin", start: 0, length: 60, permissions: 420 },
+          ],
+        },
+      },
+    }),
+  };
+  const result = await createDownloadManifestDetails("version");
+  assert.equal(result.installerPackage, true);
+  assert.equal(result.downloadSize, 100);
+  assert.deepEqual(result.fileList, {
+    "Setup.exe": "version",
+    "data.bin": "version",
+  });
 });

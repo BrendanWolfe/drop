@@ -51,6 +51,8 @@ pub struct DownloadInformation {
     manifests: HashMap<String, Manifest>,
     install_size: u64,
     download_size: u64,
+    #[serde(default)]
+    installer_package: bool,
 }
 
 pub struct GameDownloadAgent {
@@ -73,6 +75,32 @@ impl Debug for GameDownloadAgent {
 }
 
 impl GameDownloadAgent {
+    pub async fn new_installer(
+        metadata: DownloadableMetadata,
+        base_dir: PathBuf,
+        sender: Sender<DownloadManagerSignal>,
+        depot_manager: Arc<DepotManager>,
+        configuration: UserConfiguration,
+    ) -> Result<Self, ApplicationDownloadError> {
+        let existing = {
+            let db = borrow_db_checked();
+            db.applications
+                .installed_game_version
+                .get(&metadata.id)
+                .and_then(|installed| db.applications.resolve_install_path(installed).ok())
+        };
+        let directory = if let Some(existing) = existing {
+            existing
+        } else {
+            let name = get_cached_object::<Game>(&format!("game/{}", metadata.id))
+                .map(|game| game.library_path)
+                .unwrap_or_else(|_| metadata.id.clone());
+            super::install_path::create_installer_directory(&base_dir, &name)?
+        };
+        super::installer_files::record(&directory, &metadata.id, std::iter::empty())?;
+        Self::new_at_path(metadata, directory, sender, depot_manager, configuration).await
+    }
+
     pub async fn new(
         metadata: DownloadableMetadata,
         base_dir: PathBuf,
@@ -393,6 +421,7 @@ impl GameDownloadAgent {
                 ("id", &self.metadata.id),
                 ("version", &self.metadata.version),
                 ("archive", "true"),
+                ("installer", "true"),
                 (
                     "previous",
                     self.dropdata
@@ -597,11 +626,20 @@ impl GameDownloadAgent {
 
         let file_list = &file_list;
         let base_path = archive_cache.as_ref().unwrap_or(&self.dropdata.base_path);
-        let current_file_tree = if archive_size.is_none() && !self.verification {
-            self.scan_filetree(base_path)?
-        } else {
-            Vec::new()
-        };
+        let installer_package = lock!(self.dl_info).as_ref().unwrap().installer_package;
+        if installer_package && !self.verification {
+            super::installer_files::record(
+                &self.dropdata.base_path,
+                &self.metadata.id,
+                file_list.keys(),
+            )?;
+        }
+        let current_file_tree =
+            if archive_size.is_none() && !self.verification && !installer_package {
+                self.scan_filetree(base_path)?
+            } else {
+                Vec::new()
+            };
 
         for file in current_file_tree {
             if !base_path.is_dir() {

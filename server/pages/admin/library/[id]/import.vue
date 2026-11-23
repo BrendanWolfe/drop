@@ -81,7 +81,10 @@
 
     <div v-if="versionGuesses" class="flex flex-col gap-4">
       <label
-        v-if="versions[currentlySelectedVersion]?.archiveDownloadAvailable"
+        v-if="
+          versions[currentlySelectedVersion]?.archiveDownloadAvailable &&
+          !installerPackage
+        "
         class="flex min-h-11 cursor-pointer items-start gap-3 rounded-xl bg-zinc-800 p-4"
       >
         <input
@@ -123,7 +126,10 @@
         </div>
       </div>
       <!-- setup executable -->
-      <div class="bg-zinc-800 p-4 rounded-xl relative flex flex-col gap-y-2">
+      <div
+        v-if="!installerPackage"
+        class="bg-zinc-800 p-4 rounded-xl relative flex flex-col gap-y-2"
+      >
         <div>
           <label class="block text-sm font-medium leading-6 text-zinc-100">{{
             $t("library.admin.import.version.setupCmd")
@@ -206,8 +212,44 @@
           class="absolute inset-0 bg-zinc-900/50"
         />
       </div>
+      <label
+        v-if="
+          versionSettings.onlySetup &&
+          type === GameType.Game &&
+          !isEmulated &&
+          versions[currentlySelectedVersion]?.type === 'local'
+        "
+        class="flex min-h-11 cursor-pointer items-start gap-3 rounded-xl bg-zinc-800 p-4 text-sm text-zinc-100"
+      >
+        <input
+          v-model="buildInstallerPackage"
+          type="checkbox"
+          class="mt-1 rounded border-zinc-600 bg-zinc-950"
+        />
+        <span>
+          <span class="block font-medium">{{
+            $t("library.admin.import.version.installer.enable")
+          }}</span>
+          <span class="mt-1 block text-zinc-400">{{
+            $t("library.admin.import.version.installer.enableHelp")
+          }}</span>
+        </span>
+      </label>
+      <InstallerPackagePicker
+        v-if="installerPackage"
+        v-model="installerSelection"
+        :game-id="gameId"
+      />
+      <InstallerLibraryInputPicker
+        v-if="installerPackage"
+        v-model="installerLibraryInputs"
+        :game-id="gameId"
+      />
       <!-- launch executables -->
-      <div class="relative flex flex-col gap-y-2 bg-zinc-800 p-4 rounded-xl">
+      <div
+        v-if="!installerPackage"
+        class="relative flex flex-col gap-y-2 bg-zinc-800 p-4 rounded-xl"
+      >
         <div>
           <label class="block text-sm font-medium leading-6 text-zinc-100">{{
             $t("library.admin.import.version.launchCmd")
@@ -288,7 +330,7 @@
       </div>
 
       <SwitchGroup
-        v-if="!versionSettings.archiveDownload"
+        v-if="!versionSettings.archiveDownload && !installerPackage"
         as="div"
         class="bg-zinc-800 p-4 rounded-xl flex items-center gap-4 justify-between"
       >
@@ -324,6 +366,7 @@
       <LoadingButton
         class="w-fit ml-auto"
         :loading="importLoading"
+        :disabled="installerPackage && !installerSelection.executable"
         @click="startImport"
       >
         {{ $t("library.admin.import.import") }}
@@ -394,6 +437,7 @@ import { FetchError } from "ofetch";
 import { GameType } from "~/prisma/client/enums";
 import type { ImportVersion } from "~/server/api/v1/admin/import/version/index.post";
 import type { VersionGuess } from "~/server/internal/library";
+import type { LibraryInput } from "~/server/internal/library/installer-input-paths";
 
 definePageMeta({
   layout: "admin",
@@ -419,6 +463,24 @@ const versionSettings = ref<Omit<typeof ImportVersion.infer, "version" | "id">>(
 );
 
 const versionGuesses = ref<Array<VersionGuess>>();
+const buildInstallerPackage = ref(false);
+const installerLibraryInputs = ref<
+  (LibraryInput & { gameName: string; versionName: string })[]
+>([]);
+const installerSelection = ref<
+  NonNullable<typeof ImportVersion.infer.installerPackage>
+>({
+  executable: "",
+  files: [],
+  platform: "Windows",
+  protonCompatible: false,
+});
+const installerPackage = computed(
+  () =>
+    buildInstallerPackage.value &&
+    versionSettings.value.onlySetup &&
+    versions[currentlySelectedVersion.value]?.type === "local",
+);
 
 const importLoading = ref(false);
 const importError = ref<string | undefined>();
@@ -427,6 +489,10 @@ async function updateCurrentlySelectedVersion(value: number) {
   if (currentlySelectedVersion.value == value) return;
   currentlySelectedVersion.value = value;
   versionSettings.value.archiveDownload = false;
+  buildInstallerPackage.value = false;
+  installerSelection.value.executable = "";
+  installerSelection.value.files = [];
+  installerLibraryInputs.value = [];
   const version = versions[currentlySelectedVersion.value];
   try {
     const results = await $dropFetch(`/api/v1/admin/import/version/preload`, {
@@ -452,6 +518,25 @@ async function startImport() {
       method: "POST",
       body: {
         ...versionSettings.value,
+        ...(installerPackage.value
+          ? {
+              installerPackage: {
+                ...installerSelection.value,
+                libraryInputs: installerLibraryInputs.value.map(
+                  ({ gameId, versionId, kind, path }) => ({
+                    gameId,
+                    versionId,
+                    kind,
+                    path,
+                  }),
+                ),
+              },
+              archiveDownload: false,
+              delta: false,
+              launches: [],
+              setups: [],
+            }
+          : {}),
         id: gameId,
         version: versions[currentlySelectedVersion.value],
       },

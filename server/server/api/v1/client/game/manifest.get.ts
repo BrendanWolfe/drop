@@ -7,6 +7,7 @@ const Query = type({
   previous: "string?",
   refresh: "string?",
   archive: "string?",
+  installer: "string?",
 });
 
 export default defineClientEventHandler(async (h3) => {
@@ -19,6 +20,11 @@ export default defineClientEventHandler(async (h3) => {
     query.previous,
     query.refresh == "true",
   );
+  if (result.installerPackage && query.installer !== "true")
+    throw createError({
+      statusCode: 409,
+      message: "Update Drop Desktop to download this installer package.",
+    });
   if (
     query.archive !== "true" &&
     Object.values(result.manifests).some(

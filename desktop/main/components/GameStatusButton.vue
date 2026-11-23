@@ -18,11 +18,7 @@
       />
       {{ fetchStatusStyleData($props.status).buttonName }}
     </button>
-    <Menu
-      v-if="showDropdown"
-      as="div"
-      class="inline-block text-left grow"
-    >
+    <Menu v-if="showDropdown" as="div" class="inline-block text-left grow">
       <div class="h-full">
         <MenuButton
           :class="[
@@ -47,6 +43,40 @@
           class="absolute left-0 top-full z-[500] mt-2 w-56 origin-top-left rounded-md bg-zinc-900 shadow-lg ring-1 ring-zinc-100/5 focus:outline-none"
         >
           <div class="py-1">
+            <MenuItem v-if="installerPackage" v-slot="{ active }">
+              <button
+                type="button"
+                @click="emit('rerun-installer')"
+                :class="[
+                  active ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400',
+                  'inline-flex min-h-10 w-full items-center justify-between px-4 text-sm',
+                ]"
+              >
+                Run installer again
+                <WrenchIcon class="size-5" aria-hidden="true" />
+              </button>
+            </MenuItem>
+            <MenuItem
+              v-if="
+                installerPackage &&
+                !locateRequired &&
+                status.type === 'Installed' &&
+                status.install_type.type === InstalledType.Installed
+              "
+              v-slot="{ active }"
+            >
+              <button
+                type="button"
+                @click="emit('locate')"
+                :class="[
+                  active ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400',
+                  'inline-flex min-h-10 w-full items-center justify-between px-4 text-sm',
+                ]"
+              >
+                Change launch file…
+                <FolderOpenIcon class="size-5" aria-hidden="true" />
+              </button>
+            </MenuItem>
             <MenuItem v-slot="{ active }">
               <button
                 @click="() => emit('install')"
@@ -86,7 +116,14 @@
                   'w-full px-4 py-2 text-sm inline-flex items-center justify-between gap-x-2',
                 ]"
               >
-                Open game folder
+                {{
+                  installerPackage &&
+                  (locateRequired ||
+                    (status.type === "Installed" &&
+                      status.install_type.type === InstalledType.SetupRequired))
+                    ? "Open installer folder"
+                    : "Open game folder"
+                }}
                 <FolderOpenIcon class="size-5 shrink-0" />
               </button>
             </MenuItem>
@@ -100,7 +137,9 @@
                   'w-full inline-flex px-4 py-2 text-sm justify-between',
                 ]"
               >
-                Uninstall
+                {{
+                  installerPackage ? "Remove installer download" : "Uninstall"
+                }}
                 <TrashIcon class="size-5" />
               </button>
             </MenuItem>
@@ -109,7 +148,9 @@
                 type="button"
                 @click="() => emit('verify')"
                 :class="[
-                  active ? 'bg-zinc-800 text-zinc-100 outline-none' : 'text-zinc-400',
+                  active
+                    ? 'bg-zinc-800 text-zinc-100 outline-none'
+                    : 'text-zinc-400',
                   'w-full min-h-10 px-4 py-2 text-left text-sm inline-flex items-center justify-between gap-x-2',
                 ]"
               >
@@ -156,6 +197,8 @@ const props = defineProps<{
   updatingDependencies?: boolean;
   checkingDependencies?: boolean;
   showVerify?: boolean;
+  installerPackage?: boolean;
+  locateRequired?: boolean;
 }>();
 const emit = defineEmits<{
   (e: "install"): void;
@@ -168,6 +211,8 @@ const emit = defineEmits<{
   (e: "resume"): void;
   (e: "update"): void;
   (e: "verify"): void;
+  (e: "locate"): void;
+  (e: "rerun-installer"): void;
 }>();
 
 interface StatusStyleData {
@@ -192,7 +237,8 @@ function fetchStatusStyleData(status: GameStatus): StatusStyleData {
       status.install_type.type === InstalledType.Installed
     ) {
       return {
-        style: "bg-blue-600 text-white hover:bg-blue-500 focus-visible:outline-blue-600",
+        style:
+          "bg-blue-600 text-white hover:bg-blue-500 focus-visible:outline-blue-600",
         buttonName: props.updatingDependencies ? "Updating" : "Update",
         icon: ArrowDownTrayIcon,
         action: () =>
@@ -200,6 +246,14 @@ function fetchStatusStyleData(status: GameStatus): StatusStyleData {
       };
     }
     if (status.install_type.type === InstalledType.Installed) {
+      if (props.locateRequired)
+        return {
+          style:
+            "bg-blue-600 text-white hover:bg-blue-500 focus-visible:outline-blue-600",
+          buttonName: "Locate game",
+          icon: FolderOpenIcon,
+          action: () => emit("locate"),
+        };
       return {
         style:
           "bg-green-600 text-white hover:bg-green-500 focus-visible:outline-green-600 hover:bg-green-500",
@@ -212,7 +266,7 @@ function fetchStatusStyleData(status: GameStatus): StatusStyleData {
       return {
         style:
           "bg-yellow-600 text-white hover:bg-yellow-500 focus-visible:outline-yellow-600 hover:bg-yellow-500",
-        buttonName: "Setup",
+        buttonName: props.installerPackage ? "Run installer" : "Setup",
         icon: WrenchIcon,
         action: () => emit("launch"),
       };

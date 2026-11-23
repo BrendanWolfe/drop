@@ -278,6 +278,12 @@ pub fn run() {
             fetch_local_game,
             remove_local_game,
             find_local_launchers,
+            fetch_installer_location,
+            fetch_installer_companion_files,
+            fetch_installer_library_inputs,
+            find_installer_launchers,
+            save_installer_location,
+            rerun_installer,
             download_archive,
             resume_archive,
             // Downloads

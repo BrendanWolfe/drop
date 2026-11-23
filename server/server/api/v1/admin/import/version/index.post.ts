@@ -34,6 +34,20 @@ export const ImportVersion = type({
   onlySetup: "boolean = false",
   delta: "boolean = false",
   archiveDownload: "boolean = false",
+  "installerPackage?": type({
+    executable: "string",
+    files: "string[] <= 1000",
+    platform: type.valueOf(Platform),
+    protonCompatible: "boolean?",
+    "libraryInputs?": type({
+      gameId: "string.uuid",
+      versionId: "string.uuid",
+      kind: "'file' | 'folder'",
+      path: "string <= 1024",
+    })
+      .array()
+      .atMostLength(24),
+  }),
 
   requiredContent: type("string")
     .array()

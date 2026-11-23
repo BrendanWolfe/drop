@@ -40,10 +40,30 @@ pub(super) fn create_emulator_directory(
     version: &str,
     metadata: &DownloadableMetadata,
 ) -> io::Result<PathBuf> {
-    fs::create_dir_all(base)?;
     let name = folder_component(name, "emulator");
     let version = folder_component(version, "version");
-    let stem = format!("{name}-{version}");
+    reserve_directory(base, format!("{name}-{version}"), |data| {
+        data.emulator
+            && data.game_id == metadata.id
+            && data.game_version == metadata.version
+            && data.target_platform == metadata.target_platform
+    })
+}
+
+pub(super) fn create_installer_directory(base: &Path, name: &str) -> io::Result<PathBuf> {
+    reserve_directory(
+        base,
+        format!("{}-installer", folder_component(name, "game")),
+        |_| false,
+    )
+}
+
+fn reserve_directory(
+    base: &Path,
+    stem: String,
+    reuse: impl Fn(&DropData) -> bool,
+) -> io::Result<PathBuf> {
+    fs::create_dir_all(base)?;
     for number in 1.. {
         let folder = if number == 1 {
             stem.clone()
@@ -55,12 +75,7 @@ pub(super) fn create_emulator_directory(
             Ok(()) => return Ok(path),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 if fs::symlink_metadata(&path)?.file_type().is_dir()
-                    && DropData::read(&path).is_ok_and(|data| {
-                        data.emulator
-                            && data.game_id == metadata.id
-                            && data.game_version == metadata.version
-                            && data.target_platform == metadata.target_platform
-                    })
+                    && DropData::read(&path).as_ref().is_ok_and(&reuse)
                 {
                     return Ok(path);
                 }

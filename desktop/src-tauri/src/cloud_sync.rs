@@ -234,6 +234,14 @@ fn installed(id: &str) -> Result<(String, PathBuf)> {
         .installed_game_version
         .get(id)
         .context("Install the game before syncing its saves.")?;
+    if db
+        .applications
+        .game_versions
+        .get(&meta.version)
+        .is_some_and(|version| version.locate_after_setup)
+    {
+        bail!("Cloud saves are not supported for installer packages.");
+    }
     Ok((
         format!("{:?}", meta.target_platform),
         db.applications

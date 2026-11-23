@@ -44,6 +44,13 @@ export default defineClientEventHandler(async (h3) => {
 
   const gameVersionMapped = {
     ...gameVersion,
+    installerBundleId: undefined,
+    locateAfterSetup: !!gameVersion.installerBundleId,
+    installerLibraryInputs: gameVersion.installerLibraryInputs ?? [],
+    // The installer is first in the package's file list; the rest are companions.
+    installerCompanionFiles: gameVersion.installerBundleId
+      ? gameVersion.fileList.slice(1)
+      : undefined,
     launches: gameVersion.launches.map((launch) => ({
       ...launch,
       emulator: launch.emulator

@@ -2,6 +2,8 @@ import prisma from "~/server/internal/db/database";
 import { defineDropTask, wrapTaskContext } from "..";
 import { libraryManager } from "../../library";
 import { castManifest } from "../../library/manifest/utils";
+import { installerBundlePath } from "../../library/installer-bundles";
+import { dropletInterface } from "../../services/torrential/droplet-interface";
 
 export default defineDropTask({
   buildId: () => `import:check-integrity:${new Date().toISOString()}`,
@@ -18,6 +20,7 @@ export default defineDropTask({
       select: {
         versionId: true,
         versionPath: true,
+        installerBundleId: true,
         displayName: true,
         dropletManifest: true,
         game: {
@@ -51,15 +54,21 @@ export default defineDropTask({
         { min, max, prefix: `re-check ${displayName}` },
       );
 
-      const manifest = await library.generateDropletManifest(
-        version.game.libraryPath,
-        version.versionPath!,
-        taskContext.progress,
-        (value) => {
-          taskContext.logger.info(value);
-        },
-        castManifest(version.dropletManifest).version === "archive-v1",
-      );
+      const manifest = version.installerBundleId
+        ? await dropletInterface.generateDropletManifest(
+            installerBundlePath(version.installerBundleId),
+            taskContext.progress,
+            (value) => taskContext.logger.info(value),
+          )
+        : await library.generateDropletManifest(
+            version.game.libraryPath,
+            version.versionPath!,
+            taskContext.progress,
+            (value) => {
+              taskContext.logger.info(value);
+            },
+            castManifest(version.dropletManifest).version === "archive-v1",
+          );
 
       // SAFETY: this is requested from the database
       // eslint-disable-next-line drop/no-prisma-delete

@@ -135,7 +135,15 @@ struct Inventory {
 /// Keep this separate from .dropdata: a 187k-file inventory must not be
 /// re-serialized for every downloaded chunk checkpoint.
 pub fn read_inventory(root: &Path, id: &str) -> std::io::Result<Vec<String>> {
-    let path = root.join(ARCHIVE_INVENTORY);
+    read_named_inventory(root, id, ARCHIVE_INVENTORY)
+}
+
+pub(super) fn read_named_inventory(
+    root: &Path,
+    id: &str,
+    name: &str,
+) -> std::io::Result<Vec<String>> {
+    let path = root.join(name);
     reject_symlink(&path).map_err(|error| std::io::Error::other(error.to_string()))?;
     let reader = match fs::File::open(path) {
         Ok(reader) => reader,
@@ -155,8 +163,17 @@ pub fn read_inventory(root: &Path, id: &str) -> std::io::Result<Vec<String>> {
 }
 
 pub fn write_inventory(root: &Path, id: &str, files: Vec<String>) -> std::io::Result<()> {
-    let path = root.join(ARCHIVE_INVENTORY);
-    let temporary = root.join(format!("{ARCHIVE_INVENTORY}.tmp"));
+    write_named_inventory(root, id, files, ARCHIVE_INVENTORY)
+}
+
+pub(super) fn write_named_inventory(
+    root: &Path,
+    id: &str,
+    files: Vec<String>,
+    name: &str,
+) -> std::io::Result<()> {
+    let path = root.join(name);
+    let temporary = root.join(format!("{name}.tmp"));
     reject_symlink(&path).map_err(|error| std::io::Error::other(error.to_string()))?;
     reject_symlink(&temporary).map_err(|error| std::io::Error::other(error.to_string()))?;
     let mut writer = std::io::BufWriter::new(fs::File::create(&temporary)?);

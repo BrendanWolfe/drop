@@ -93,9 +93,27 @@ pub async fn download_game(
             .iter()
             .find(|option| option.version_id == meta.version && option.platform == target_platform)
             .map(|option| option.folder_version_name().to_owned());
+        let installer_package = options.iter().any(|option| {
+            option.version_id == meta.version
+                && option.platform == target_platform
+                && option.installer_package
+        });
 
         {
             let db = borrow_db_checked();
+            if !is_emulator
+                && let Some(installed) = db.applications.installed_game_version.get(&meta.id)
+                && let Ok(path) = db.applications.resolve_install_path(installed)
+            {
+                let is_installer = db.applications.game_versions.get(&installed.version)
+                    .is_some_and(|version| version.locate_after_setup)
+                    || games::downloads::installer_files::has_inventory(&path);
+                if is_installer != installer_package {
+                    return Err(ApplicationDownloadError::Archive(
+                        "Remove the current download before switching between a game and an installer package.".into(),
+                    ));
+                }
+            }
             let status = db.applications.transient_statuses.get(&meta);
 
             if matches!(
@@ -148,15 +166,26 @@ pub async fn download_game(
                     .map_err(ApplicationDownloadError::Archive)?;
             }
         }
-        let game_download_agent = GameDownloadAgent::new(
-            meta.clone(),
-            base_dir,
-            version_name,
-            sender,
-            DOWNLOAD_MANAGER.clone_depot_manager(),
-            configuration,
-        )
-        .await;
+        let game_download_agent = if installer_package {
+            GameDownloadAgent::new_installer(
+                meta.clone(),
+                base_dir,
+                sender,
+                DOWNLOAD_MANAGER.clone_depot_manager(),
+                configuration,
+            )
+            .await
+        } else {
+            GameDownloadAgent::new(
+                meta.clone(),
+                base_dir,
+                version_name,
+                sender,
+                DOWNLOAD_MANAGER.clone_depot_manager(),
+                configuration,
+            )
+            .await
+        };
         let game_download_agent = match game_download_agent {
             Ok(agent) => agent,
             Err(error) => {

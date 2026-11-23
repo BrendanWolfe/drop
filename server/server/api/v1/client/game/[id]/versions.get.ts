@@ -17,6 +17,7 @@ type VersionDownloadOption = {
   versionPath?: string | undefined;
   platform: Platform;
   protonCompatible: boolean;
+  installerPackage?: boolean;
   protonRequiredContent: VersionDownloadOption["requiredContent"];
   size: GameVersionSize;
   requiredContent: Array<{
@@ -61,6 +62,7 @@ export default defineClientEventHandler(async (h3) => {
       versionPath: true,
       gameId: true,
       onlySetup: true,
+      installerBundleId: true,
       launches: {
         select: {
           platform: true,
@@ -159,6 +161,7 @@ export default defineClientEventHandler(async (h3) => {
                 displayName: v.displayName || undefined,
                 versionPath: v.versionPath || undefined,
                 platform,
+                ...(v.installerBundleId ? { installerPackage: true } : {}),
                 ...compatibility,
                 size: size!,
               }) satisfies VersionDownloadOption,

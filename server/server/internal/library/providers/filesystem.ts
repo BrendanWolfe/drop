@@ -39,6 +39,10 @@ export class FilesystemProvider implements LibraryProvider<
     return this.myId;
   }
 
+  filesystemRoot() {
+    return this.config.baseDir;
+  }
+
   type(): LibraryBackend {
     return LibraryBackend.Filesystem;
   }

@@ -23,6 +23,16 @@ import { castManifest } from "./manifest/utils";
 import { Shescape } from "shescape";
 import type { Prisma } from "~/prisma/client/client";
 import { validateEmulatorProfile } from "./emulator-profile";
+import { validateInstallerInputs } from "./installer-library-inputs";
+import { dropletInterface } from "../services/torrential/droplet-interface";
+import {
+  installerBundlePath,
+  removeInstallerBundles,
+} from "./installer-bundles";
+import {
+  resolveInstallerFiles,
+  snapshotInstallerFiles,
+} from "./installer-files";
 
 export function createGameImportTaskId(libraryId: string, libraryPath: string) {
   return createHash("md5")
@@ -435,8 +445,14 @@ class LibraryManager {
       const base = await prisma.gameVersion.findFirst({
         where: { gameId, delta: false },
         orderBy: { versionIndex: "desc" },
-        select: { dropletManifest: true },
+        select: { dropletManifest: true, installerBundleId: true },
       });
+      if (base?.installerBundleId)
+        throw createError({
+          statusCode: 400,
+          message:
+            "Installer packages cannot be used as a base for delta updates.",
+        });
       if (base && castManifest(base.dropletManifest).version === "archive-v1")
         throw createError({
           statusCode: 400,
@@ -470,7 +486,7 @@ class LibraryManager {
     }
 
     if (metadata.onlySetup) {
-      if (metadata.setups.length == 0)
+      if (metadata.setups.length == 0 && !metadata.installerPackage)
         throw createError({
           statusCode: 400,
           message: 'Setup required in "setup mode".',
@@ -558,6 +574,52 @@ class LibraryManager {
     const library = this.libraries.get(game.libraryId);
     if (!library) return undefined;
 
+    const installer = metadata.installerPackage;
+    let installerFiles:
+      | Awaited<ReturnType<typeof resolveInstallerFiles>>
+      | undefined;
+    let installerCommand: string | undefined;
+    let installerLibraryInputs:
+      | Awaited<ReturnType<typeof validateInstallerInputs>>
+      | undefined;
+    if (installer) {
+      if (
+        !metadata.onlySetup ||
+        metadata.delta ||
+        metadata.archiveDownload ||
+        version.type !== "local" ||
+        game.type !== GameType.Game ||
+        game.isEmulated ||
+        metadata.setups.length ||
+        metadata.launches.length
+      )
+        throw createError({
+          statusCode: 400,
+          message:
+            "Select an installer package for a complete, non-emulated game in Setup mode.",
+        });
+      try {
+        installerFiles = await resolveInstallerFiles(library.filesystemRoot(), [
+          installer.executable,
+          ...installer.files,
+        ]);
+        installerCommand = this.shescape.escape(`./${installerFiles[0]!.name}`);
+      } catch (cause) {
+        throw createError({
+          statusCode: 400,
+          message:
+            cause instanceof Error && !("code" in cause)
+              ? cause.message
+              : "One or more installer files are no longer available.",
+        });
+      }
+      installerLibraryInputs = await validateInstallerInputs(
+        gameId,
+        installer.libraryInputs ?? [],
+        this.listInstallerArchive.bind(this),
+      );
+    }
+
     const unimportedVersion =
       version.type === "depot"
         ? await prisma.unimportedGameVersion.findUnique({
@@ -581,8 +643,30 @@ class LibraryManager {
           let versionPath: string | null = null;
           let manifest;
           let fileList;
+          let installerBundleId: string | null = null;
 
-          if (version.type === "local") {
+          if (installerFiles) {
+            installerBundleId = crypto.randomUUID();
+            versionPath = version.identifier;
+            const directory = installerBundlePath(installerBundleId);
+            logger.info("Copying selected installer files");
+            try {
+              const currentFiles = await resolveInstallerFiles(
+                library.filesystemRoot(),
+                [installer!.executable, ...installer!.files],
+              );
+              await snapshotInstallerFiles(directory, currentFiles);
+              manifest = await dropletInterface.generateDropletManifest(
+                directory,
+                (value) => progress(value * 0.9),
+                (value) => logger.info(value),
+              );
+              fileList = currentFiles.map(({ name }) => name);
+            } catch (cause) {
+              await removeInstallerBundles([{ installerBundleId }]);
+              throw cause;
+            }
+          } else if (version.type === "local") {
             versionPath = version.identifier;
             // First, create the manifest via droplet.
             // This takes up 90% of our progress, so we wrap it in a *0.9
@@ -620,71 +704,96 @@ class LibraryManager {
             throw "Could not find or create manifest for this version.";
           }
 
-          const largestIndex = await prisma.gameVersion.findFirst({
-            where: { gameId: gameId },
-            orderBy: {
-              versionIndex: "desc",
-            },
-            select: {
-              versionIndex: true,
-            },
-          });
+          const largestIndex = await prisma.gameVersion
+            .findFirst({
+              where: { gameId: gameId },
+              orderBy: {
+                versionIndex: "desc",
+              },
+              select: {
+                versionIndex: true,
+              },
+            })
+            .catch(async (cause) => {
+              await removeInstallerBundles([{ installerBundleId }]);
+              throw cause;
+            });
           const currentIndex = largestIndex ? largestIndex.versionIndex + 1 : 0;
 
           // Then, create the database object
-          const newVersion = await prisma.gameVersion.create({
-            data: {
-              game: {
-                connect: {
-                  id: gameId,
+          const newVersion = await prisma.gameVersion
+            .create({
+              data: {
+                game: {
+                  connect: {
+                    id: gameId,
+                  },
+                },
+
+                displayName: metadata.displayName ?? null,
+
+                versionPath,
+                dropletManifest: manifest,
+                fileList,
+                versionIndex: currentIndex,
+                delta: metadata.delta,
+
+                onlySetup: metadata.onlySetup,
+                installerBundleId,
+                installerLibraryInputs,
+                setups: {
+                  createMany: {
+                    data:
+                      installer && installerCommand
+                        ? [
+                            {
+                              command: installerCommand,
+                              platform: installer.platform,
+                              protonCompatible:
+                                installer.platform === "Windows" &&
+                                !!installer.protonCompatible,
+                            },
+                          ]
+                        : metadata.setups.map((v) => ({
+                            command: v.launch,
+                            platform: v.platform,
+                            protonCompatible:
+                              v.platform === "Windows" && !!v.protonCompatible,
+                          })),
+                  },
+                },
+
+                launches: {
+                  createMany: !metadata.onlySetup
+                    ? {
+                        data: metadata.launches.map((v) => ({
+                          name: v.name,
+                          command: v.launch,
+                          platform: v.platform,
+                          protonCompatible:
+                            v.platform === "Windows" && !!v.protonCompatible,
+                          ...(v.emulatorId && game.type === "Game"
+                            ? {
+                                emulatorId: v.emulatorId,
+                              }
+                            : undefined),
+                          emulatorSuggestions:
+                            game.type === "Emulator"
+                              ? (v.suggestions ?? [])
+                              : [],
+                          ...(v.emulatorProfile
+                            ? { emulatorProfile: v.emulatorProfile }
+                            : {}),
+                        })),
+                      }
+                    : { data: [] },
                 },
               },
-
-              displayName: metadata.displayName ?? null,
-
-              versionPath,
-              dropletManifest: manifest,
-              fileList,
-              versionIndex: currentIndex,
-              delta: metadata.delta,
-
-              onlySetup: metadata.onlySetup,
-              setups: {
-                createMany: {
-                  data: metadata.setups.map((v) => ({
-                    command: v.launch,
-                    platform: v.platform,
-                    protonCompatible:
-                      v.platform === "Windows" && !!v.protonCompatible,
-                  })),
-                },
-              },
-
-              launches: {
-                createMany: !metadata.onlySetup
-                  ? {
-                      data: metadata.launches.map((v) => ({
-                        name: v.name,
-                        command: v.launch,
-                        platform: v.platform,
-                        protonCompatible:
-                          v.platform === "Windows" && !!v.protonCompatible,
-                        ...(v.emulatorId && game.type === "Game"
-                          ? {
-                              emulatorId: v.emulatorId,
-                            }
-                          : undefined),
-                        emulatorSuggestions:
-                          game.type === "Emulator" ? (v.suggestions ?? []) : [],
-                        ...(v.emulatorProfile
-                          ? { emulatorProfile: v.emulatorProfile }
-                          : {}),
-                      })),
-                    }
-                  : { data: [] },
-              },
-            },
-          });
+            })
+            .catch(async (cause) => {
+              await removeInstallerBundles([{ installerBundleId }]);
+              throw cause;
+            });
           logger.info("Successfully created version!");
 
           notificationSystem.systemPush({
@@ -729,6 +838,12 @@ class LibraryManager {
     return await library.peekFile(game, version, filename);
   }
 
+  async listInstallerArchive(libraryId: string, game: string, version: string) {
+    const library = this.libraries.get(libraryId);
+    if (!library) return [];
+    return library.versionReaddir(game, version);
+  }
+
   async deleteGameVersion(gameId: string, version: string) {
     if (
       await prisma.launchConfiguration.count({
@@ -740,12 +855,15 @@ class LibraryManager {
         message:
           "This emulator version is required by game launches. Remove those versions before deleting it.",
       });
-    await prisma.gameVersion.deleteMany({
-      where: {
-        gameId: gameId,
-        versionId: version,
-      },
-    });
+    const where = { gameId, versionId: version };
+    const [bundles] = await prisma.$transaction([
+      prisma.gameVersion.findMany({
+        where,
+        select: { installerBundleId: true },
+      }),
+      prisma.gameVersion.deleteMany({ where }),
+    ]);
+    await removeInstallerBundles(bundles);
   }
 
   async deleteGame(gameId: string) {
@@ -759,11 +877,14 @@ class LibraryManager {
         message:
           "This emulator is required by game launches. Remove those versions before deleting it.",
       });
-    await prisma.game.deleteMany({
-      where: {
-        id: gameId,
-      },
-    });
+    const [bundles] = await prisma.$transaction([
+      prisma.gameVersion.findMany({
+        where: { gameId },
+        select: { installerBundleId: true },
+      }),
+      prisma.game.deleteMany({ where: { id: gameId } }),
+    ]);
+    await removeInstallerBundles(bundles);
     // Delete all game versions that depended on this game
     await prisma.gameVersion.deleteMany({
       where: {

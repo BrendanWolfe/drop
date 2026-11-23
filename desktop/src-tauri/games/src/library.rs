@@ -163,6 +163,12 @@ pub fn uninstall_game_logic(meta: DownloadableMetadata, app_handle: &AppHandle) 
         warn!("refusing unsafe uninstall: {error}");
         return;
     }
+    let installer = crate::downloads::installer_files::has_inventory(&install_path)
+        || db_handle
+            .applications
+            .game_versions
+            .get(&meta.version)
+            .is_some_and(|version| version.locate_after_setup);
     db_handle
         .applications
         .transient_statuses
@@ -194,7 +200,12 @@ pub fn uninstall_game_logic(meta: DownloadableMetadata, app_handle: &AppHandle) 
 
         let app_handle = app_handle.clone();
         spawn(move || {
-            if let Err(e) = remove_dir_all(install_path) {
+            let result = if installer {
+                crate::downloads::installer_files::remove(&install_path, &meta.id)
+            } else {
+                remove_dir_all(install_path)
+            };
+            if let Err(e) = result {
                 error!("{e}");
                 let mut db = borrow_db_mut_checked();
                 db.applications.transient_statuses.remove(&meta);
@@ -213,6 +224,7 @@ pub fn uninstall_game_logic(meta: DownloadableMetadata, app_handle: &AppHandle) 
                 .applications
                 .installed_game_version
                 .remove(&meta.id);
+            db_handle.applications.installer_locations.remove(&meta.id);
             db_handle
                 .applications
                 .game_statuses
@@ -267,6 +279,16 @@ pub async fn on_game_complete(
     game_version.user_configuration = configuration;
 
     let mut handle = borrow_db_mut_checked();
+    let setup_required = game_version
+        .setups
+        .iter()
+        .any(|v| v.platform == meta.target_platform)
+        && !(game_version.locate_after_setup
+            && handle
+                .applications
+                .installer_locations
+                .get(&meta.id)
+                .is_some_and(|location| location.platform == meta.target_platform));
     handle
         .applications
         .game_versions
@@ -274,16 +296,11 @@ pub async fn on_game_complete(
 
     drop(handle);
 
-    let setup_configuration = game_version
-        .setups
-        .iter()
-        .find(|v| v.platform == meta.target_platform);
-
     if let Ok(mut data) =
         crate::downloads::drop_data::DropData::read(std::path::Path::new(&install_dir))
     {
         data.installed_version = Some(game_version.clone());
-        data.setup_completed = Some(setup_configuration.is_none());
+        data.setup_completed = Some(!setup_required);
         data.configuration = game_version.user_configuration.clone();
         data.write();
     }
@@ -291,10 +308,10 @@ pub async fn on_game_complete(
     let status = GameDownloadStatus::Installed {
         version_id: meta.version.clone(),
         install_dir,
-        install_type: if setup_configuration.is_none() {
-            InstalledGameType::Installed
-        } else {
+        install_type: if setup_required {
             InstalledGameType::SetupRequired
+        } else {
+            InstalledGameType::Installed
         },
         update_available: false,
     };

@@ -12,29 +12,14 @@
     </div>
     <div>
       <label for="local-launcher" class="field-label">Launch file</label>
-      <div class="flex gap-2">
-        <input
-          id="local-launcher"
-          v-model="launcher"
-          required
-          class="field-input"
-          placeholder="Executable or script"
-        />
-        <button type="button" class="browse-button" @click="chooseLauncher">
-          Browse
-        </button>
-      </div>
-      <select
-        v-if="candidates.length"
-        class="field-input mt-2"
-        aria-label="Detected launch files"
-        @change="selectCandidate"
-      >
-        <option value="">Choose a detected launch file…</option>
-        <option v-for="path in candidates" :key="path" :value="path">
-          {{ path.slice((game?.root.length ?? 0) + 1) }}
-        </option>
-      </select>
+      <LaunchFilePicker
+        input-id="local-launcher"
+        v-model="launcher"
+        :root="root"
+        :candidates="candidates"
+        @selected="setLauncher"
+        @error="error = $event"
+      />
     </div>
     <div>
       <label for="local-root" class="field-label">Game folder</label>
@@ -174,22 +159,6 @@ function setLauncher(path: string) {
         .split(/[\\/]/)
         .pop()
         ?.replace(/\.[^.]+$/, "") ?? "";
-}
-function selectCandidate(event: Event) {
-  const path = (event.target as HTMLSelectElement).value;
-  if (path) setLauncher(path);
-}
-async function chooseLauncher() {
-  try {
-    const path = await open({
-      multiple: false,
-      directory: false,
-      defaultPath: root.value || undefined,
-    });
-    if (typeof path === "string") setLauncher(path);
-  } catch (e) {
-    error.value = String(e);
-  }
 }
 async function chooseDirectory(field: "root" | "working") {
   try {

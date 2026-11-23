@@ -24,6 +24,9 @@ pub mod data {
     pub type EmulatorInstallation = v1::EmulatorInstallation;
     pub type UserConfiguration = v1::UserConfiguration;
     pub type LocalGame = v1::LocalGame;
+    pub type InstallerLocation = v1::InstallerLocation;
+    pub type InstallerLibraryInput = v1::InstallerLibraryInput;
+    pub type InstallerLibraryInputKind = v1::InstallerLibraryInputKind;
     pub type ArchiveInstall = v1::ArchiveInstall;
     pub type ArchiveState = v1::ArchiveState;
     pub type LaunchConfiguration = v1::LaunchConfiguration;
@@ -138,6 +141,12 @@ pub mod data {
             pub version_path: String,
 
             pub only_setup: bool,
+            #[serde(default)]
+            pub locate_after_setup: bool,
+            #[serde(default)]
+            pub installer_companion_files: Option<Vec<String>>,
+            #[serde(default)]
+            pub installer_library_inputs: Vec<InstallerLibraryInput>,
 
             pub version_index: usize,
             pub delta: bool,
@@ -221,6 +230,33 @@ pub mod data {
             pub platform: Platform,
             pub playtime_seconds: u64,
             pub archive: Option<ArchiveInstall>,
+        }
+
+        /// A user-selected install, deliberately separate from Drop's installer download.
+        #[derive(Serialize, Deserialize, Clone, Debug)]
+        #[serde(rename_all = "camelCase")]
+        pub struct InstallerLocation {
+            pub root: PathBuf,
+            pub launcher: PathBuf,
+            pub platform: Platform,
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+        #[serde(rename_all = "camelCase")]
+        pub struct InstallerLibraryInput {
+            pub game_id: String,
+            pub version_id: String,
+            pub game_name: String,
+            pub version_name: String,
+            pub kind: InstallerLibraryInputKind,
+            pub path: String,
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+        #[serde(rename_all = "lowercase")]
+        pub enum InstallerLibraryInputKind {
+            File,
+            Folder,
         }
 
         #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -394,6 +430,8 @@ pub mod data {
             pub default_emulator_install_dir: Option<PathBuf>,
             #[serde(default)]
             pub local_games: HashMap<String, LocalGame>,
+            #[serde(default)]
+            pub installer_locations: HashMap<String, InstallerLocation>,
             // Guaranteed to exist if the game also exists in the app state map
             pub game_statuses: HashMap<String, GameDownloadStatus>,
 
@@ -456,6 +494,7 @@ pub mod data {
                     default_install_dir: None,
                     default_emulator_install_dir: None,
                     local_games: HashMap::new(),
+                    installer_locations: HashMap::new(),
                     game_statuses: HashMap::new(),
                     game_versions: HashMap::new(),
                     installed_game_version: HashMap::new(),

@@ -5,7 +5,9 @@ use crate::{
     process_manager::ProcessHandler,
 };
 use database::{
-    Database, GameDownloadStatus, GameVersion, models::data::InstalledGameType, platform::Platform,
+    Database, DownloadableMetadata, GameDownloadStatus, GameVersion,
+    models::data::{InstalledGameType, InstallerLocation},
+    platform::Platform,
 };
 use dynfmt::Format;
 use std::path::{Path, PathBuf};
@@ -13,6 +15,77 @@ use std::path::{Path, PathBuf};
 pub struct ResolvedCommand {
     pub command: ParsedCommand,
     pub working_directory: PathBuf,
+}
+
+pub fn installer_game_folder(root: &Path, package: &Path) -> Result<PathBuf, String> {
+    let root = dunce::canonicalize(root).map_err(|_| "Choose an existing game folder.")?;
+    let package = dunce::canonicalize(package).map_err(|_| "The installer folder is missing.")?;
+    if !root.is_dir() || root.starts_with(&package) || package.starts_with(&root) {
+        return Err(
+            "Choose the installed game's folder, separate from the downloaded installer.".into(),
+        );
+    }
+    Ok(root)
+}
+
+pub fn installer_location(
+    root: &Path,
+    launcher: &Path,
+    package: &Path,
+    platform: Platform,
+) -> Result<InstallerLocation, String> {
+    let root = installer_game_folder(root, package)?;
+    let launcher = dunce::canonicalize(launcher).map_err(|_| "Choose an existing launch file.")?;
+    if !launcher.is_file() || !launcher.starts_with(&root) {
+        return Err("Choose a launch file inside the game folder.".into());
+    }
+    Ok(InstallerLocation {
+        root,
+        launcher,
+        platform,
+    })
+}
+
+pub fn located_installer_game(
+    db: &Database,
+    meta: &DownloadableMetadata,
+) -> Option<InstallerLocation> {
+    let location = db.applications.installer_locations.get(&meta.id)?;
+    if location.platform != meta.target_platform {
+        return None;
+    }
+    let package = db.applications.resolve_install_path(meta).ok()?;
+    installer_location(
+        &location.root,
+        &location.launcher,
+        &package,
+        location.platform,
+    )
+    .ok()
+    .filter(|current| current.root == location.root && current.launcher == location.launcher)
+}
+
+#[cfg(test)]
+mod installer_tests {
+    use super::*;
+
+    #[test]
+    fn locate_accepts_a_nested_launcher_and_rejects_package_or_outside_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let package = temp.path().join("download");
+        let root = temp.path().join("installed");
+        let launcher = root.join("bin/play.exe");
+        let installer = package.join("setup.exe");
+        std::fs::create_dir(&package).unwrap();
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::write(&launcher, b"game").unwrap();
+        std::fs::write(&installer, b"setup").unwrap();
+
+        assert!(installer_location(&root, &launcher, &package, Platform::Windows).is_ok());
+        assert!(installer_location(&root, &installer, &package, Platform::Windows).is_err());
+        assert!(installer_location(&package, &installer, &package, Platform::Windows).is_err());
+        assert!(installer_location(temp.path(), &launcher, &package, Platform::Windows).is_err());
+    }
 }
 
 pub fn finish_command(

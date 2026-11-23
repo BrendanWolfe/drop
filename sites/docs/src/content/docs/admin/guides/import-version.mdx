@@ -57,7 +57,15 @@ Once you've got a library set up, and have imported a game, you can import a ver
 
    ### Installer version
 
-   A installer version uses "setup mode". Enable the option, and then add the installer executable in setup commands.
+    For a setup-only version that downloads the entire version folder, enable **Setup mode** and add the installer as a setup command.
+
+    To download only an installer and selected companion files, enable **Setup mode → Package selected installer files** when importing a local version of a non-emulated game. Choose the installer and optional files from that game's library. Drop copies the selected files into a package, placing the companion files beside the installer. Choose files with distinct names.
+
+    In Drop Desktop, select **Run installer** and install the game outside the downloaded installer folder. If setup asks for a companion file, use **Installer files → Copy path** on the game's library page and paste it into the installer's file picker. The paths are available before and during setup.
+
+    If the installer needs a file the player may already have, such as a ROM for a recompilation, choose **Reuse files from installed games**. Select the source game and exact version, then pick a file, a subfolder, or the whole game folder. Drop lists the existing path under **Installer files** without bundling or downloading a second copy. If the required version is missing, the player can open the source game's store page and download that version separately.
+
+    After setup, select **Locate game**, choose the installed game folder, then pick and save the launch file. The library entry now shows **Play**. The action menu lets you run the installer again or remove its download without deleting the installed game. The game or its own launcher handles updates to the installed files.
 
    :::note
    Setup and launch commands are parsed in a cross-platform, POSIX style. It's not relevant for simple setups, but useful to know. Read more about it in [Command Parsing](/docs/reference/command-parsing/).

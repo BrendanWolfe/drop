@@ -15,6 +15,7 @@ export type DownloadManifestDetails = {
   installSize: number;
   /// Size of download
   downloadSize: number;
+  installerPackage?: boolean;
 };
 
 function convertMap<T>(map: Map<string, T>): { [key: string]: T } {
@@ -46,6 +47,7 @@ export async function createDownloadManifestDetails(
       negativeFileList: true,
       gameId: true,
       dropletManifest: true,
+      installerBundleId: true,
     },
   });
   if (!mainVersion)
@@ -90,6 +92,7 @@ export async function createDownloadManifestDetails(
         fileList: true,
         negativeFileList: true,
         dropletManifest: true,
+        installerBundleId: true,
       },
     });
     if (!nextVersion)
@@ -98,11 +101,14 @@ export async function createDownloadManifestDetails(
         message: "Delta version without version underneath it.",
       });
 
-    if (castManifest(nextVersion.dropletManifest).version === "archive-v1")
+    if (
+      nextVersion.installerBundleId ||
+      castManifest(nextVersion.dropletManifest).version === "archive-v1"
+    )
       throw createError({
         statusCode: 409,
         message:
-          "Delta updates cannot be applied to archive installations. Import a complete version.",
+          "Delta updates cannot be applied to archive or installer packages. Import a complete version.",
       });
 
     versionIndex = nextVersion.versionIndex;
@@ -176,6 +182,7 @@ export async function createDownloadManifestDetails(
     manifests: convertMap(manifests),
     installSize,
     downloadSize,
+    ...(mainVersion.installerBundleId ? { installerPackage: true } : {}),
   };
   await manifestCache.set(manifestKey, result);
 
