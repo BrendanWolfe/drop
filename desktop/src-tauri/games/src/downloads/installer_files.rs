@@ -230,6 +230,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let package = temp.path().join("package");
         fs::create_dir(&package).unwrap();
+        fs::create_dir(package.join("installed game")).unwrap();
+        fs::write(package.join("installed game/play.exe"), b"game").unwrap();
         for name in [
             "setup v1.exe",
             "setup.exe",
@@ -244,7 +246,8 @@ mod tests {
         assert!(remove(&package, "other game").is_err());
         assert!(package.join("setup.exe").exists());
         remove(&package, "game").unwrap();
-        assert_eq!(fs::read_dir(&package).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(&package).unwrap().count(), 2);
+        assert!(package.join("installed game/play.exe").is_file());
         assert!(package.join("user.txt").is_file());
     }
 }

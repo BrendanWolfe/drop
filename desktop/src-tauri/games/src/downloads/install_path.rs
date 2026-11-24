@@ -58,6 +58,19 @@ pub(super) fn create_installer_directory(base: &Path, name: &str) -> io::Result<
     )
 }
 
+pub(super) fn create_companion_directory(
+    base: &Path,
+    name: &str,
+    meta: &DownloadableMetadata,
+) -> io::Result<PathBuf> {
+    reserve_directory(base, folder_component(name, "game"), |data| {
+        !data.emulator
+            && data.game_id == meta.id
+            && data.game_version == meta.version
+            && data.target_platform == meta.target_platform
+    })
+}
+
 fn reserve_directory(
     base: &Path,
     stem: String,

@@ -121,7 +121,7 @@ export enum InstalledType {
 }
 
 export interface InstalledGameStatusData {
-  install_type: { type: InstalledType };
+  install_type: { type: InstalledType; companion_only?: boolean };
   version_id: string;
   install_dir: string;
   update_available: boolean;

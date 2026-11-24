@@ -16,7 +16,10 @@ use database::{
 use download_manager::{
     DOWNLOAD_MANAGER, downloadable::Downloadable, error::ApplicationDownloadError,
 };
-use games::downloads::download_agent::GameDownloadAgent;
+use games::downloads::download_agent::{CompanionRequest, GameDownloadAgent};
+use remote::{
+    auth::generate_authorization_header, requests::generate_url, utils::DROP_CLIENT_ASYNC,
+};
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Keep the flat IPC fields backwards compatible.
@@ -72,7 +75,7 @@ pub async fn download_game(
         {
             return Ok(());
         }
-        let options = fetch_game_version_options_logic(game_id.clone(), state).await?;
+        let options = fetch_game_version_options_logic(game_id.clone(), state.clone()).await?;
         if !contains_build(&options, &version_id, target_platform) {
             return Err(ApplicationDownloadError::BuildUnavailable);
         }
@@ -207,6 +210,12 @@ pub async fn download_game(
             .await
             .map_err(|error| ApplicationDownloadError::Archive(error.to_string()))?;
 
+        if installer_package {
+            let failures = prepare_installer_companions(&meta.id, &meta.version, state, &app).await;
+            if !failures.is_empty() {
+                utils::app_emit!(&app, "installer_companion_error", (&meta.id, failures.join("\n")));
+            }
+        }
         Ok(())
     }
     .await;
@@ -220,6 +229,208 @@ pub async fn download_game(
         );
     }
     result
+}
+
+async fn companion_version(game: &str, version: &str) -> Result<database::GameVersion, String> {
+    let url = generate_url(&["/api/v1/client/game", game, "version", version], &[])
+        .map_err(|e| e.to_string())?;
+    DROP_CLIENT_ASYNC
+        .get(url)
+        .header(
+            "Authorization",
+            generate_authorization_header().map_err(|e| e.to_string())?,
+        )
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn prepare_installer_companions(
+    id: &str,
+    version: &str,
+    state: tauri::State<'_, Mutex<AppState>>,
+    app: &tauri::AppHandle,
+) -> Vec<String> {
+    let version = match companion_version(id, version).await {
+        Ok(version) if version.locate_after_setup => version,
+        Ok(_) => return vec![],
+        Err(error) => return vec![format!("Could not load installer companions: {error}")],
+    };
+    let mut groups = std::collections::BTreeMap::<_, Vec<_>>::new();
+    for input in version
+        .installer_library_inputs
+        .into_iter()
+        .filter(|input| input.game_id != id)
+    {
+        groups
+            .entry((input.game_id.clone(), input.version_id.clone()))
+            .or_default()
+            .push(input);
+    }
+    let mut failures = vec![];
+    for ((source, pinned), inputs) in groups {
+        let name = inputs[0].game_name.clone();
+        if let Err(error) = queue_companion_source(source, pinned, inputs, state.clone(), app).await
+        {
+            failures.push(format!("{name}: {error}"));
+        }
+    }
+    failures
+}
+
+async fn queue_companion_source(
+    id: String,
+    version: String,
+    inputs: Vec<database::models::data::InstallerLibraryInput>,
+    state: tauri::State<'_, Mutex<AppState>>,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    use crate::local_games::{LibraryInputStatus, installed_library_input};
+    let pending_inputs = |db: &database::Database| -> Result<Vec<_>, String> {
+        let mut pending = vec![];
+        for input in &inputs {
+            match installed_library_input(db, input) {
+                Ok(_) => (),
+                Err(LibraryInputStatus::WrongVersion) => return Err("A different version is installed. Switch to the pinned version before retrying.".into()),
+                Err(LibraryInputStatus::Busy) => return Err("Wait for the source game's current operation, then retry missing files.".into()),
+                Err(_) => pending.push(input.clone()),
+            }
+        }
+        Ok(pending)
+    };
+    if pending_inputs(&borrow_db_checked())?.is_empty() {
+        return Ok(());
+    }
+
+    let url = generate_url(&["/api/v1/client/collection/default/entry"], &[])
+        .map_err(|e| e.to_string())?;
+    let response = remote::requests::make_authenticated_post(url, &serde_json::json!({"id": &id}))
+        .await
+        .map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err("Could not add the source game to your library.".into());
+    }
+    utils::app_emit!(app, "update_library", ());
+    let game = crate::games::fetch_game(id.clone(), state.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+    if game.game.game_type != "Game" {
+        return Err("This source is not a library game.".into());
+    }
+    let options = fetch_game_version_options_logic(id.clone(), state)
+        .await
+        .map_err(|e| e.to_string())?;
+    let option = options
+        .iter()
+        .find(|option| option.version_id == version && !option.installer_package)
+        .ok_or("The pinned version is no longer available for this device.")?;
+    let meta = DownloadableMetadata::new(id, version, option.platform, DownloadType::Game);
+    let (directory, new_folder, configuration, request) = {
+        let mut db = borrow_db_mut_checked();
+        let inputs = pending_inputs(&db)?;
+        if inputs.is_empty() {
+            return Ok(());
+        }
+        let apps = &db.applications;
+        let (directory, new_folder) =
+            if let Some(existing) = apps.installed_game_version.get(&meta.id) {
+                if existing != &meta {
+                    return Err("A different build is installed.".into());
+                }
+                let path = apps.resolve_install_path(existing)?;
+                games::library::validate_managed_directory(&db, existing, &path)?;
+                (path, None)
+            } else {
+                let base = apps.resolve_install_directory(InstallLocationKind::Game, None, None)?;
+                (base, Some(game.game.library_path.as_str()))
+            };
+        let current = apps.game_statuses.get(&meta.id);
+        let already_complete = matches!(
+            current,
+            Some(GameDownloadStatus::Installed {
+                install_type: InstalledGameType::Installed | InstalledGameType::SetupRequired,
+                ..
+            })
+        );
+        let configuration = match current {
+            Some(GameDownloadStatus::Installed {
+                install_type: InstalledGameType::PartiallyInstalled { configuration, .. },
+                ..
+            }) => configuration.clone(),
+            _ => apps
+                .game_versions
+                .get(&meta.version)
+                .map(|item| item.user_configuration.clone())
+                .unwrap_or_default(),
+        };
+        games::downloads::integrity::reserve(&mut db, &meta)?;
+        (
+            directory,
+            new_folder,
+            configuration,
+            CompanionRequest {
+                inputs,
+                missing_dependencies: option
+                    .required_content
+                    .iter()
+                    .any(|item| item.installed_path.is_none()),
+                already_complete,
+            },
+        )
+    };
+    let result = async {
+        let agent = GameDownloadAgent::new_companion(
+            meta.clone(),
+            directory,
+            new_folder,
+            DOWNLOAD_MANAGER.get_sender(),
+            DOWNLOAD_MANAGER.clone_depot_manager(),
+            configuration,
+            request,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        DOWNLOAD_MANAGER
+            .queue_download(Arc::new(
+                Box::new(agent) as Box<dyn Downloadable + Send + Sync>
+            ))
+            .await
+            .map_err(|e| e.to_string())
+    }
+    .await;
+    if result.is_err() {
+        borrow_db_mut_checked()
+            .applications
+            .transient_statuses
+            .remove(&meta);
+    }
+    utils::app_emit!(app, "update_library", ());
+    result
+}
+
+#[tauri::command]
+pub async fn retry_installer_companions(
+    id: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let version = {
+        let db = borrow_db_checked();
+        crate::local_games::installer_package_meta(&db, &id)?
+            .version
+            .clone()
+    };
+    let failures = prepare_installer_companions(&id, &version, state, &app).await;
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 #[tauri::command]
@@ -280,7 +491,7 @@ pub async fn resume_download(
                 .map_err(ApplicationDownloadError::Archive)?;
             let install_dir = match status {
                 GameDownloadStatus::Installed {
-                    install_type: InstalledGameType::PartiallyInstalled { configuration },
+                    install_type: InstalledGameType::PartiallyInstalled { configuration, .. },
                     ..
                 } => Ok((path, configuration)),
                 _ => Err(ApplicationDownloadError::InvalidCommand),
@@ -384,7 +595,7 @@ pub async fn verify_file_integrity(
             return Err(ApplicationDownloadError::InvalidCommand);
         };
         let configuration = match install_type {
-            InstalledGameType::PartiallyInstalled { configuration } => configuration,
+            InstalledGameType::PartiallyInstalled { configuration, .. } => configuration,
             _ => db
                 .applications
                 .game_versions

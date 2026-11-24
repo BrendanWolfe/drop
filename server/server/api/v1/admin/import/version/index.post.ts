@@ -36,6 +36,7 @@ export const ImportVersion = type({
   archiveDownload: "boolean = false",
   "installerPackage?": type({
     executable: "string",
+    "launchPath?": "string <= 1024",
     files: "string[] <= 1000",
     platform: type.valueOf(Platform),
     protonCompatible: "boolean?",

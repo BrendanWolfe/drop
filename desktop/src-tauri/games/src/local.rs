@@ -86,6 +86,7 @@ pub fn register(db: &mut Database, local: LocalGame, command: Option<String>) {
         locate_after_setup: false,
         installer_companion_files: None,
         installer_library_inputs: vec![],
+        installer_launch_path: None,
         version_index: 0,
         delta: false,
         user_configuration: configuration,
@@ -107,6 +108,7 @@ pub fn register(db: &mut Database, local: LocalGame, command: Option<String>) {
             } else {
                 InstalledGameType::PartiallyInstalled {
                     configuration: UserConfiguration::default(),
+                    companion_only: false,
                 }
             },
             version_id: local.id.clone(),

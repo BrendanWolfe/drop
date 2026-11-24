@@ -281,6 +281,7 @@ pub fn run() {
             fetch_installer_location,
             fetch_installer_companion_files,
             fetch_installer_library_inputs,
+            retry_installer_companions,
             find_installer_launchers,
             save_installer_location,
             rerun_installer,

@@ -38,6 +38,10 @@ pub mod v1 {
         pub installed_version: Option<database::GameVersion>,
         #[serde(default)]
         pub setup_completed: Option<bool>,
+        #[serde(default)]
+        pub companion_only: bool,
+        #[serde(default)]
+        pub companion_files: super::super::companion::CompanionFiles,
     }
 
     impl DropData {
@@ -60,6 +64,8 @@ pub mod v1 {
                 emulator: false,
                 installed_version: None,
                 setup_completed: None,
+                companion_only: false,
+                companion_files: Default::default(),
             }
         }
     }
@@ -85,7 +91,11 @@ impl DropData {
                         target_platform,
                         base_path,
                         configuration,
-                        Some(v.game_version),
+                        if v.companion_only {
+                            None
+                        } else {
+                            Some(v.game_version)
+                        },
                     );
                 }
                 v

@@ -29,6 +29,14 @@ pub enum PendingAction {
 fn pending_action(status: &GameDownloadStatus) -> Option<PendingAction> {
     match status {
         GameDownloadStatus::Installed {
+            install_type:
+                InstalledGameType::PartiallyInstalled {
+                    companion_only: true,
+                    ..
+                },
+            ..
+        } => Some(PendingAction::Update),
+        GameDownloadStatus::Installed {
             install_type: InstalledGameType::PartiallyInstalled { .. },
             ..
         } => Some(PendingAction::Resume),
@@ -110,7 +118,7 @@ pub async fn queue_pending_download(
     state: tauri::State<'_, Mutex<AppState>>,
     app: tauri::AppHandle,
 ) -> Result<Vec<DownloadableMetadata>, ApplicationDownloadError> {
-    let (action, install_dir, configuration, version_index, local_archive) = {
+    let (action, install_dir, configuration, version_index, local_archive, companion_only) = {
         let db = borrow_db_checked();
         if meta.download_type != DownloadType::Game
             || db.applications.installed_game_version.get(&meta.id) != Some(&meta)
@@ -144,6 +152,7 @@ pub async fn queue_pending_download(
         let GameDownloadStatus::Installed {
             install_dir,
             version_id,
+            install_type,
             ..
         } = status
         else {
@@ -153,9 +162,21 @@ pub async fn queue_pending_download(
         (
             action,
             PathBuf::from(install_dir),
-            version.map(|version| version.user_configuration.clone()),
+            match install_type {
+                InstalledGameType::PartiallyInstalled { configuration, .. } => {
+                    Some(configuration.clone())
+                }
+                _ => version.map(|version| version.user_configuration.clone()),
+            },
             version.map(|version| version.version_index),
             local_archive,
+            matches!(
+                install_type,
+                InstalledGameType::PartiallyInstalled {
+                    companion_only: true,
+                    ..
+                }
+            ),
         )
     };
     if DOWNLOAD_MANAGER
@@ -177,17 +198,25 @@ pub async fn queue_pending_download(
     }
 
     let options = fetch_game_version_options_logic(meta.id.clone(), state.clone()).await?;
-    if !crate::version_options::has_update(
-        &options,
-        meta.target_platform,
-        &meta.version,
-        version_index.ok_or(ApplicationDownloadError::InvalidCommand)?,
-    ) {
+    if !companion_only
+        && !crate::version_options::has_update(
+            &options,
+            meta.target_platform,
+            &meta.version,
+            version_index.ok_or(ApplicationDownloadError::InvalidCommand)?,
+        )
+    {
         return Err(ApplicationDownloadError::BuildUnavailable);
     }
-    let latest = crate::version_options::latest_for_platform(&options, meta.target_platform)
-        .filter(|option| option.version_id != meta.version)
-        .ok_or(ApplicationDownloadError::BuildUnavailable)?;
+    let latest = if companion_only {
+        options.iter().find(|option| {
+            option.platform == meta.target_platform && option.version_id == meta.version
+        })
+    } else {
+        crate::version_options::latest_for_platform(&options, meta.target_platform)
+            .filter(|option| option.version_id != meta.version)
+    }
+    .ok_or(ApplicationDownloadError::BuildUnavailable)?;
     let next_meta = DownloadableMetadata {
         version: latest.version_id.clone(),
         ..meta.clone()
@@ -290,7 +319,8 @@ mod tests {
         assert_eq!(
             pending_action(&installed(
                 InstalledGameType::PartiallyInstalled {
-                    configuration: UserConfiguration::default()
+                    configuration: UserConfiguration::default(),
+                    companion_only: false,
                 },
                 true
             )),

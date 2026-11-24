@@ -24,9 +24,11 @@ pub fn reserve(
             "Integrity verification is available for server-managed installations only.".into(),
         );
     }
-    if db.applications.transient_statuses.contains_key(meta)
-        || (meta.download_type == database::DownloadType::Emulator
-            && crate::emulators::emulator_in_use(db, meta))
+    if db.applications.transient_statuses.keys().any(|existing| {
+        existing == meta
+            || (meta.download_type == database::DownloadType::Game && existing.id == meta.id)
+    }) || (meta.download_type == database::DownloadType::Emulator
+        && crate::emulators::emulator_in_use(db, meta))
     {
         return Err(
             "Stop this game and wait for its current operation to finish before verifying.".into(),

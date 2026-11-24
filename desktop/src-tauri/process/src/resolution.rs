@@ -20,9 +20,12 @@ pub struct ResolvedCommand {
 pub fn installer_game_folder(root: &Path, package: &Path) -> Result<PathBuf, String> {
     let root = dunce::canonicalize(root).map_err(|_| "Choose an existing game folder.")?;
     let package = dunce::canonicalize(package).map_err(|_| "The installer folder is missing.")?;
-    if !root.is_dir() || root.starts_with(&package) || package.starts_with(&root) {
+    // The package owns only its top-level files; some installers create a game
+    // subfolder right beside setup.exe. Never treat the package itself (or one
+    // of its ancestors) as the installed game.
+    if !root.is_dir() || package.starts_with(&root) {
         return Err(
-            "Choose the installed game's folder, separate from the downloaded installer.".into(),
+            "Choose the installed game's folder, not the installer download folder itself.".into(),
         );
     }
     Ok(root)
@@ -85,6 +88,13 @@ mod installer_tests {
         assert!(installer_location(&root, &installer, &package, Platform::Windows).is_err());
         assert!(installer_location(&package, &installer, &package, Platform::Windows).is_err());
         assert!(installer_location(temp.path(), &launcher, &package, Platform::Windows).is_err());
+
+        let nested = package.join("My Game");
+        std::fs::create_dir(&nested).unwrap();
+        let nested_launcher = nested.join("play.exe");
+        std::fs::write(&nested_launcher, b"game").unwrap();
+        assert!(installer_location(&nested, &nested_launcher, &package, Platform::Windows).is_ok());
+        assert!(installer_location(&nested, &installer, &package, Platform::Windows).is_err());
     }
 }
 

@@ -45,7 +45,7 @@
               >{{ file.source.gameName }} · {{ file.source.versionName }} ·
               {{
                 file.path
-                  ? "Reuses your download"
+                  ? "Ready to use"
                   : inputStatus[file.source.status.type]
               }}</span
             >
@@ -76,6 +76,22 @@
         >
       </li>
     </ul>
+    <button
+      v-if="canRetry"
+      type="button"
+      :disabled="retrying"
+      class="min-h-10 rounded-md bg-zinc-800 px-3 text-sm font-medium text-zinc-100 hover:bg-zinc-700 disabled:opacity-50"
+      @click="retry"
+    >
+      {{ retrying ? "Checking source games…" : "Download missing files" }}
+    </button>
+    <p
+      v-if="downloadError"
+      role="alert"
+      class="whitespace-pre-line text-sm text-amber-200"
+    >
+      {{ downloadError }}
+    </p>
     <p v-if="copyError" role="alert" class="text-sm text-amber-200">
       {{ copyError }}
     </p>
@@ -106,9 +122,9 @@ type LibraryInput = {
 };
 const inputStatus = {
   ready: "",
-  downloadNeeded: "Download this version first",
+  downloadNeeded: "Not downloaded yet",
   wrongVersion: "A different version is installed",
-  busy: "Wait for the source game download to finish",
+  busy: "Source game is queued or in use",
   missing: "File or folder not found. Check the source game’s files.",
 };
 type FileRow = {
@@ -133,8 +149,16 @@ const copiedFile = ref("");
 const loadError = ref("");
 const inputError = ref(false);
 const copyError = ref("");
+const downloadError = ref("");
+const retrying = ref(false);
+const canRetry = computed(() =>
+  inputs.value.some(
+    ({ status }) =>
+      status.type === "downloadNeeded" || status.type === "missing",
+  ),
+);
 let request = 0;
-let unlisten: (() => void) | undefined;
+const unlisteners: (() => void)[] = [];
 let disposed = false;
 
 async function refresh() {
@@ -152,22 +176,44 @@ async function refresh() {
       ? "Could not read the downloaded files. Try opening the installer folder from the game menu."
       : "";
   inputError.value = reused.status === "rejected";
+  if (!inputError.value && inputs.value.every((input) => input.copyPath))
+    downloadError.value = "";
+}
+
+async function retry() {
+  retrying.value = true;
+  downloadError.value = "";
+  try {
+    await invoke("retry_installer_companions", { id: props.gameId });
+  } catch (cause) {
+    downloadError.value = String(cause);
+  } finally {
+    retrying.value = false;
+    void refresh();
+  }
 }
 
 watch(() => props.running, refresh);
 onMounted(() => {
   void refresh();
   window.addEventListener("focus", refresh);
-  void listen("update_library", refresh)
-    .then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    })
-    .catch(() => {});
+  for (const listener of [
+    listen("update_library", refresh),
+    listen<[string, string]>("installer_companion_error", ({ payload }) => {
+      if (payload[0] === props.gameId) downloadError.value = payload[1];
+    }),
+  ]) {
+    void listener
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisteners.push(stop);
+      })
+      .catch(() => {});
+  }
 });
 onUnmounted(() => {
   disposed = true;
-  unlisten?.();
+  unlisteners.forEach((stop) => stop());
   window.removeEventListener("focus", refresh);
 });
 

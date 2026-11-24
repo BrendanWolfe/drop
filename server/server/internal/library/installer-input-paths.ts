@@ -5,6 +5,29 @@ export type LibraryInput = {
   path: string;
 };
 
+export function normalizeInstallerLaunchPath(
+  value: string,
+): string | undefined {
+  const path = value.trim().replaceAll("\\", "/").replace(/^\.\//u, "");
+  if (!path) return undefined;
+  if (
+    path.length > 1024 ||
+    path
+      .split("/")
+      .some(
+        (part) =>
+          !part ||
+          part === "." ||
+          part === ".." ||
+          /[:<>"|?*\p{Cc}]|[. ]$/u.test(part),
+      )
+  )
+    throw new Error(
+      "Enter a launch file path relative to the installed game folder.",
+    );
+  return path;
+}
+
 export function validLibraryInputPath(path: string): boolean {
   return (
     path.length <= 1024 &&

@@ -80,7 +80,7 @@
             @options="() => (configureModalOpen = true)"
             @open-folder="() => openGameFolder()"
             @resume="() => resumeDownload()"
-            @update="repairEmulators"
+            @update="updateGame"
             @verify="integrityOpen = true"
             @locate="locateOpen = true"
             @rerun-installer="rerunInstaller"
@@ -102,6 +102,7 @@
             v-if="
               status.type === 'Installed' &&
               status.update_available &&
+              !status.install_type.companion_only &&
               !missingEmulators.length &&
               !dependencyCheckError
             "
@@ -131,8 +132,8 @@
           "
           class="mt-3 text-sm text-zinc-400"
         >
-          In the installer, choose a folder separate from the downloaded
-          installer files.
+          After setup, select the folder that contains the installed game. It
+          can be inside the installer download folder.
         </p>
         <InstallerCompanionFiles
           v-if="
@@ -928,6 +929,17 @@ async function repairEmulators() {
     repairOpen.value = true;
 }
 
+async function updateGame() {
+  if (
+    status.value.type === "Installed" &&
+    status.value.install_type.companion_only
+  ) {
+    await installFlow(status.value.version_id);
+  } else {
+    await repairEmulators();
+  }
+}
+
 const bannerUrl = await useObject(game.mBannerObjectId);
 
 const htmlDescription = renderGameDescription(game.mDescription, useObject);
@@ -957,7 +969,7 @@ const currentImageIndex = ref(0);
 
 const configureModalOpen = ref(false);
 
-async function installFlow() {
+async function installFlow(versionId?: string) {
   installFlowOpen.value = true;
   allVersionOptions.value = undefined;
   installDirs.value = undefined;
@@ -968,9 +980,24 @@ async function installFlow() {
     allVersionOptions.value = await invoke("fetch_game_version_options", {
       gameId: game.id,
     });
-    const first = allVersionOptions.value?.[0];
+    const options = allVersionOptions.value ?? [];
+    const first = versionId
+      ? options.find(
+          (option) =>
+            option.versionId === versionId &&
+            option.platform === option.installedPlatform,
+        )
+      : options[0];
+    if (versionId && !first)
+      throw new Error(
+        "The installed version is no longer available for this device.",
+      );
     installPlatform.value = first?.installedPlatform ?? first?.platform ?? "";
-    installVersionIndex.value = -1;
+    installVersionIndex.value = versionId
+      ? (versionOptions.value?.findIndex(
+          (option) => option.versionId === versionId,
+        ) ?? -1)
+      : -1;
     installLocations.value = await fetchInstallLocations();
     const main = mainLocations.value!;
     installDirs.value = main.directories;

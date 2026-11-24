@@ -24,6 +24,7 @@ import { Shescape } from "shescape";
 import type { Prisma } from "~/prisma/client/client";
 import { validateEmulatorProfile } from "./emulator-profile";
 import { validateInstallerInputs } from "./installer-library-inputs";
+import { normalizeInstallerLaunchPath } from "./installer-input-paths";
 import { dropletInterface } from "../services/torrential/droplet-interface";
 import {
   installerBundlePath,
@@ -579,6 +580,7 @@ class LibraryManager {
       | Awaited<ReturnType<typeof resolveInstallerFiles>>
       | undefined;
     let installerCommand: string | undefined;
+    let installerLaunchPath: string | undefined;
     let installerLibraryInputs:
       | Awaited<ReturnType<typeof validateInstallerInputs>>
       | undefined;
@@ -599,6 +601,9 @@ class LibraryManager {
             "Select an installer package for a complete, non-emulated game in Setup mode.",
         });
       try {
+        installerLaunchPath = normalizeInstallerLaunchPath(
+          installer.launchPath ?? "",
+        );
         installerFiles = await resolveInstallerFiles(library.filesystemRoot(), [
           installer.executable,
           ...installer.files,
@@ -741,6 +746,7 @@ class LibraryManager {
                 onlySetup: metadata.onlySetup,
                 installerBundleId,
                 installerLibraryInputs,
+                installerLaunchPath,
                 setups: {
                   createMany: {
                     data:
@@ -842,6 +848,25 @@ class LibraryManager {
     const library = this.libraries.get(libraryId);
     if (!library) return [];
     return library.versionReaddir(game, version);
+  }
+
+  async indexCompanionArchive(
+    libraryId: string,
+    game: string,
+    version: string,
+  ) {
+    const library = this.libraries.get(libraryId);
+    if (!library)
+      throw createError({
+        statusCode: 404,
+        message: "Source library not found.",
+      });
+    return library.generateDropletManifest(
+      game,
+      version,
+      () => {},
+      () => {},
+    );
   }
 
   async deleteGameVersion(gameId: string, version: string) {

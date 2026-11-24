@@ -122,19 +122,22 @@ pub async fn download_game_chunk(
             .get(&file.filename)
             .map(|v| v == version_id)
             .unwrap_or(false);
-        let path = super::integrity::payload_path(base_path, &file.filename)?;
-        if should_write {
+        let path = if should_write {
+            let path = super::integrity::payload_path(base_path, &file.filename)?;
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-        }
-        let mut file_handle = if should_write {
+            Some(path)
+        } else {
+            None
+        };
+        let mut file_handle = if let Some(path) = &path {
             let mut file_handle = tokio::fs::OpenOptions::new()
                 .truncate(false)
                 .write(true)
                 .append(false)
                 .create(true)
-                .open(&path)
+                .open(path)
                 .await?;
             file_handle
                 .seek(SeekFrom::Start(file.start.try_into().unwrap()))
@@ -202,7 +205,7 @@ pub async fn download_game_chunk(
                 file.permissions
             };
             let permissions = Permissions::from_mode(permissions);
-            if should_write {
+            if let Some(path) = path {
                 set_permissions(path, permissions)
                     .map_err(|e| ApplicationDownloadError::IoError(Arc::new(e)))?;
             }

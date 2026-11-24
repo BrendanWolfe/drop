@@ -147,6 +147,8 @@ pub mod data {
             pub installer_companion_files: Option<Vec<String>>,
             #[serde(default)]
             pub installer_library_inputs: Vec<InstallerLibraryInput>,
+            #[serde(default)]
+            pub installer_launch_path: Option<String>,
 
             pub version_index: usize,
             pub delta: bool,
@@ -335,6 +337,8 @@ pub mod data {
             PartiallyInstalled {
                 #[serde(default)]
                 configuration: UserConfiguration,
+                #[serde(default)]
+                companion_only: bool,
             },
         }
 
@@ -676,6 +680,7 @@ pub mod data {
             };
             let install_type = InstalledGameType::PartiallyInstalled {
                 configuration: configuration.clone(),
+                companion_only: true,
             };
 
             let encoded =
@@ -687,6 +692,7 @@ pub mod data {
             match round_trip {
                 InstalledGameType::PartiallyInstalled {
                     configuration: decoded,
+                    companion_only: true,
                 } => {
                     assert_eq!(decoded, configuration);
                 }
@@ -701,7 +707,10 @@ pub mod data {
             );
 
             match decoded {
-                InstalledGameType::PartiallyInstalled { configuration } => {
+                InstalledGameType::PartiallyInstalled {
+                    configuration,
+                    companion_only: false,
+                } => {
                     assert_eq!(configuration, UserConfiguration::default());
                 }
                 other => panic!("expected partially installed, got {other:?}"),

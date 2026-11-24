@@ -349,6 +349,7 @@ pub fn finish_emulator_uninstall(db: &mut Database, meta: &DownloadableMetadata,
         // as complete after a failed removal; keep it resumable instead.
         if let GameDownloadStatus::Installed { install_type, .. } = &mut installation.status {
             *install_type = InstalledGameType::PartiallyInstalled {
+                companion_only: false,
                 configuration: db
                     .applications
                     .game_versions
@@ -764,6 +765,7 @@ mod tests {
         {
             *install_type = InstalledGameType::PartiallyInstalled {
                 configuration: Default::default(),
+                companion_only: false,
             };
         }
         assert!(

@@ -4,7 +4,24 @@ import {
   hasLibraryInput,
   installedFilePaths,
   listInputDirectory,
+  normalizeInstallerLaunchPath,
 } from "./installer-input-paths.ts";
+
+test("installer launch paths accept Windows separators but cannot escape the game folder", () => {
+  assert.equal(
+    normalizeInstallerLaunchPath(" .\\bin\\My Game.exe "),
+    "bin/My Game.exe",
+  );
+  assert.equal(normalizeInstallerLaunchPath(""), undefined);
+  for (const path of [
+    "C:\\game.exe",
+    "/game.exe",
+    "\\\\share\\game.exe",
+    "bin/../game.exe",
+    "bin/",
+  ])
+    assert.throws(() => normalizeInstallerLaunchPath(path), /relative/);
+});
 
 test("can select a ROM, its parent folder, or the entire installed game", () => {
   const files = installedFilePaths([

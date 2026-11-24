@@ -41,6 +41,20 @@ are not inherited on redirects, even if the URL points to the Drop server.
 Signed download URLs are stored locally to support resume, not sent as admin
 telemetry or included in network error logs.
 
+## Installer packages
+
+In Setup mode, admins can select companion files from a pinned version of
+another library game. Drop reuses that version's downloaded files if available.
+Otherwise it adds the source game to the player's library and queues just the
+selected file, folder, or whole game, without installing its emulators. Use
+**Update** on the source game's page to finish installing it. Drop does not
+replace a different installed version automatically.
+
+Admins can set an optional **Expected launch file**, such as `bin/Game.exe`.
+After setup, **Locate game** shows it first if it exists in the selected folder.
+You can select a subfolder next to `setup.exe`, or a folder elsewhere. Removing
+the installer package does not remove the installed game files.
+
 ## Administrator downloads page
 
 **Admin → Downloads** lists server-hosted game downloads, with the game title,

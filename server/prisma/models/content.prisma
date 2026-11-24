@@ -160,6 +160,8 @@ model GameVersion {
   onlySetup Boolean @default(false)
   installerBundleId String? @unique
   installerLibraryInputs Json?
+  installerLaunchPath String?
+  companionArchiveManifest Json?
 
   dropletManifest  Json // Results from droplet
   fileList         String[] // List of all files, for delta updates

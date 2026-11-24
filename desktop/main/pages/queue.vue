@@ -21,18 +21,23 @@
       </div>
       <!-- The graph owns its own column; it can never sit behind the controls. -->
       <div
+        ref="speedGraph"
         class="relative min-w-12 flex-1 overflow-hidden bg-zinc-950/60"
         aria-hidden="true"
       >
         <div
           v-if="!isPaused"
-          class="absolute inset-0 flex items-end gap-[0.1%] pt-2"
+          class="absolute inset-0 flex items-end pt-2"
+          :style="{ gap: `${speedBarGap}px` }"
         >
           <div
-            v-for="(bar, index) in speedHistory"
+            v-for="(bar, index) in visibleSpeedHistory"
             :key="index"
-            class="min-w-0 flex-1 rounded-t bg-blue-500"
-            :style="{ height: `${(bar / speedMax) * 100}%` }"
+            class="shrink-0 bg-blue-500"
+            :style="{
+              width: `${speedBarWidth}px`,
+              height: `${(bar / speedMax) * 100}%`,
+            }"
           />
         </div>
       </div>
@@ -306,13 +311,36 @@ import {
 const queue = useQueueState();
 const stats = useStatsState();
 const speedHistory = useDownloadHistory();
-const speedMax = computed(() => Math.max(1, ...speedHistory.value) * 1.1);
+const speedBarWidth = 4;
+const speedBarGap = 2;
+const speedGraph = ref<HTMLDivElement | null>(null);
+const speedGraphWidth = ref(0);
+const visibleSpeedHistory = computed(() => {
+  // Reserve space for whole bars only; there is no gap after the last one.
+  const capacity = Math.floor(
+    (speedGraphWidth.value + speedBarGap) / (speedBarWidth + speedBarGap),
+  );
+  return speedHistory.value.slice(
+    Math.max(0, speedHistory.value.length - capacity),
+  );
+});
+const speedMax = computed(
+  () => Math.max(1, ...visibleSpeedHistory.value) * 1.1,
+);
+let speedGraphObserver: ResizeObserver | undefined;
 const reducedMotion = ref(false);
 onMounted(() => {
+  if (speedGraph.value) {
+    speedGraphObserver = new ResizeObserver(([entry]) => {
+      if (entry) speedGraphWidth.value = entry.contentRect.width;
+    });
+    speedGraphObserver.observe(speedGraph.value);
+  }
   reducedMotion.value = window.matchMedia(
     "(prefers-reduced-motion: reduce)",
   ).matches;
 });
+onUnmounted(() => speedGraphObserver?.disconnect());
 const isPaused = computed(() => queue.value.status === "Paused");
 const displayStats = computed(() =>
   isPaused.value ? { speed: 0, time: 0 } : stats.value,

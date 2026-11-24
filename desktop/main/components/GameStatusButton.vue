@@ -275,9 +275,10 @@ function fetchStatusStyleData(status: GameStatus): StatusStyleData {
       return {
         style:
           "bg-blue-600 text-white hover:bg-blue-500 focus-visible:outline-blue-600 hover:bg-blue-500",
-        buttonName: "Resume",
+        buttonName: status.install_type.companion_only ? "Update" : "Resume",
         icon: ArrowDownTrayIcon,
-        action: () => emit("resume"),
+        action: () =>
+          status.install_type.companion_only ? emit("update") : emit("resume"),
       };
     }
     throw "Non-exhaustive install type: " + JSON.stringify(status.install_type);

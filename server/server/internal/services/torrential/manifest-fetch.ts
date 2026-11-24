@@ -8,6 +8,7 @@ import {
   VersionResponseSchema,
 } from "../../proto/torrential/proto/version_pb";
 import { castManifest } from "../../library/manifest/utils";
+import { companionArchiveSuffix } from "../../library/manifest/companion-archive";
 import { LibraryBackend } from "~/prisma/client/client";
 import { create, fromBinary } from "@bufbuild/protobuf";
 import prisma from "../../db/database";
@@ -22,13 +23,17 @@ export default defineQueryProcessor({
   queryType: DropBoundType.VERSION_QUERY,
   run: async (query) => {
     const queryData = fromBinary(VersionQuerySchema, query.data);
+    const companion = queryData.versionId.endsWith(companionArchiveSuffix);
 
     const version = await prisma.gameVersion.findUnique({
       where: {
-        versionId: queryData.versionId,
+        versionId: companion
+          ? queryData.versionId.slice(0, -companionArchiveSuffix.length)
+          : queryData.versionId,
       },
       select: {
         dropletManifest: true,
+        companionArchiveManifest: true,
         versionPath: true,
         installerBundleId: true,
         game: {
@@ -39,13 +44,15 @@ export default defineQueryProcessor({
         },
       },
     });
-    if (!version)
+    if (!version || (companion && !version.companionArchiveManifest))
       throw createError({
         statusCode: 404,
         message: "Game version not found",
       });
 
-    const manifest = castManifest(version.dropletManifest);
+    const manifest = castManifest(
+      companion ? version.companionArchiveManifest : version.dropletManifest,
+    );
 
     const mapEnum = (v: LibraryBackend) => {
       switch (v) {

@@ -162,7 +162,7 @@ pub async fn find_local_launchers(id: String) -> Result<Vec<String>, String> {
     scan_launchers(game.root).await
 }
 
-fn installer_package_meta<'a>(
+pub(crate) fn installer_package_meta<'a>(
     db: &'a Database,
     id: &str,
 ) -> Result<&'a DownloadableMetadata, String> {
@@ -209,7 +209,7 @@ pub struct ResolvedInstallerLibraryInput {
 
 #[derive(serde::Serialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", tag = "type")]
-enum LibraryInputStatus {
+pub(crate) enum LibraryInputStatus {
     Ready,
     DownloadNeeded,
     WrongVersion,
@@ -217,7 +217,7 @@ enum LibraryInputStatus {
     Missing,
 }
 
-fn installed_library_input(
+pub(crate) fn installed_library_input(
     db: &Database,
     input: &InstallerLibraryInput,
 ) -> Result<PathBuf, LibraryInputStatus> {
@@ -225,26 +225,22 @@ fn installed_library_input(
     if apps.local_games.contains_key(&input.game_id) {
         return Err(LibraryInputStatus::DownloadNeeded);
     }
+    if apps.transient_statuses.iter().any(|(meta, status)| {
+        meta.id == input.game_id
+            && !matches!(status, database::ApplicationTransientStatus::Running {})
+    }) {
+        return Err(LibraryInputStatus::Busy);
+    }
     let source = apps
         .installed_game_version
         .get(&input.game_id)
         .ok_or(LibraryInputStatus::DownloadNeeded)?;
-    if apps
-        .transient_statuses
-        .get(source)
-        .is_some_and(|status| !matches!(status, database::ApplicationTransientStatus::Running {}))
-    {
-        return Err(LibraryInputStatus::Busy);
-    }
     if source.version != input.version_id {
         return Err(LibraryInputStatus::WrongVersion);
     }
-    if !matches!(apps.game_statuses.get(&input.game_id), Some(GameDownloadStatus::Installed {
+    let complete = matches!(apps.game_statuses.get(&input.game_id), Some(GameDownloadStatus::Installed {
         version_id, install_type: InstalledGameType::Installed | InstalledGameType::SetupRequired, ..
-    }) if version_id == &input.version_id)
-    {
-        return Err(LibraryInputStatus::DownloadNeeded);
-    }
+    }) if version_id == &input.version_id);
     let folder = apps
         .resolve_install_path(source)
         .map_err(|_| LibraryInputStatus::Missing)?;
@@ -257,6 +253,9 @@ fn installed_library_input(
         || games::downloads::installer_files::has_inventory(&folder)
     {
         return Err(LibraryInputStatus::Missing);
+    }
+    if !complete && !data.companion_files.contains(&folder, input) {
+        return Err(LibraryInputStatus::DownloadNeeded);
     }
     games::downloads::installer_files::resolve_library_input(&folder, input.kind, &input.path)
         .ok_or(LibraryInputStatus::Missing)
@@ -494,8 +493,36 @@ pub fn fetch_installer_location(id: String) -> Option<InstallerLocation> {
 
 #[tauri::command]
 pub async fn find_installer_launchers(id: String, root: PathBuf) -> Result<Vec<String>, String> {
-    let (_, package) = installed_package(&borrow_db_checked(), &id)?;
-    scan_launchers(process::resolution::installer_game_folder(&root, &package)?).await
+    let (meta, package, expected) = {
+        let db = borrow_db_checked();
+        let (meta, package) = installed_package(&db, &id)?;
+        let expected = db.applications.game_versions[&meta.version]
+            .installer_launch_path
+            .clone();
+        (meta, package, expected)
+    };
+    let root = process::resolution::installer_game_folder(&root, &package)?;
+    let hint = expected.and_then(|path| {
+        let relative = PathBuf::from(path.replace('\\', "/"));
+        if !database::install_records::valid_relative(&relative) {
+            return None;
+        }
+        let location = process::resolution::installer_location(
+            &root,
+            &root.join(relative),
+            &package,
+            meta.target_platform,
+        )
+        .ok()?;
+        ParsedCommand::for_file(&location.launcher, "", meta.target_platform).ok()?;
+        Some(location.launcher.to_string_lossy().into_owned())
+    });
+    let mut candidates = scan_launchers(root).await?;
+    if let Some(hint) = hint {
+        candidates.retain(|path| path != &hint);
+        candidates.insert(0, hint);
+    }
+    Ok(candidates)
 }
 
 #[tauri::command]

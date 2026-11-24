@@ -166,14 +166,14 @@ fn reconcile(db: &mut Database, discovered: Vec<(PathBuf, DropData)>) -> Vec<Str
         if let Some(version) = db.applications.game_versions.get_mut(&metadata.version) {
             // Existing device configuration wins over a copied checkpoint.
             if let Some(GameDownloadStatus::Installed {
-                install_type: InstalledGameType::PartiallyInstalled { configuration },
+                install_type: InstalledGameType::PartiallyInstalled { configuration, .. },
                 ..
             }) = &previous
             {
                 version.user_configuration = configuration.clone();
             } else if previous.is_none() || matches!(previous, Some(GameDownloadStatus::Remote {}))
             {
-                version.user_configuration = drop_data.configuration;
+                version.user_configuration = drop_data.configuration.clone();
             }
         }
         let setup_required = matches!(
@@ -201,7 +201,12 @@ fn reconcile(db: &mut Database, discovered: Vec<(PathBuf, DropData)>) -> Vec<Str
             GameDownloadStatus::Installed {
                 version_id: metadata.version.clone(),
                 install_dir: path.to_string_lossy().into_owned(),
-                install_type: if setup_required {
+                install_type: if drop_data.companion_only {
+                    InstalledGameType::PartiallyInstalled {
+                        configuration: drop_data.configuration,
+                        companion_only: true,
+                    }
+                } else if setup_required {
                     InstalledGameType::SetupRequired
                 } else {
                     InstalledGameType::Installed
@@ -405,6 +410,7 @@ mod tests {
             GameDownloadStatus::Installed {
                 install_type: InstalledGameType::PartiallyInstalled {
                     configuration: existing_configuration.clone(),
+                    companion_only: false,
                 },
                 version_id: "1.0.0".to_owned(),
                 install_dir: existing_install_dir.clone(),
@@ -425,7 +431,7 @@ mod tests {
 
         match db.applications.game_statuses.get("installed-game") {
             Some(GameDownloadStatus::Installed {
-                install_type: InstalledGameType::PartiallyInstalled { configuration },
+                install_type: InstalledGameType::PartiallyInstalled { configuration, .. },
                 version_id,
                 install_dir,
                 update_available,
@@ -467,6 +473,7 @@ mod tests {
                     install_type: if partial {
                         InstalledGameType::PartiallyInstalled {
                             configuration: test_configuration(),
+                            companion_only: false,
                         }
                     } else {
                         InstalledGameType::Installed

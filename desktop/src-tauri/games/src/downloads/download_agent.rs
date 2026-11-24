@@ -21,7 +21,7 @@ use remote::error::RemoteAccessError;
 use remote::requests::generate_url;
 use remote::utils::DROP_CLIENT_ASYNC;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::fs::{create_dir_all, remove_file};
 use std::io;
@@ -66,6 +66,24 @@ pub struct GameDownloadAgent {
     pub dropdata: DropData,
     status: Mutex<DownloadStatus>,
     verification: bool,
+    companion: Option<CompanionPlan>,
+}
+
+pub struct CompanionRequest {
+    pub inputs: Vec<database::models::data::InstallerLibraryInput>,
+    pub missing_dependencies: bool,
+    pub already_complete: bool,
+}
+
+#[derive(Default)]
+struct CompanionPlan {
+    inputs: Vec<database::models::data::InstallerLibraryInput>,
+    files: HashMap<String, u64>,
+    checkpointable: HashSet<String>,
+    // A mixed chunk can be resumed by this exact job, but must not be saved
+    // as fully installed for a later download with a different selection.
+    completed: Mutex<HashMap<String, bool>>,
+    complete_install: bool,
 }
 
 impl Debug for GameDownloadAgent {
@@ -168,8 +186,41 @@ impl GameDownloadAgent {
             depot_manager,
             configuration,
             false,
+            None,
         )
         .await
+    }
+
+    pub async fn new_companion(
+        metadata: DownloadableMetadata,
+        directory: PathBuf,
+        name_for_new_folder: Option<&str>,
+        sender: Sender<DownloadManagerSignal>,
+        depot_manager: Arc<DepotManager>,
+        configuration: UserConfiguration,
+        request: CompanionRequest,
+    ) -> Result<Self, ApplicationDownloadError> {
+        let directory = match name_for_new_folder {
+            Some(name) => {
+                super::install_path::create_companion_directory(&directory, name, &metadata)?
+            }
+            None => directory,
+        };
+        let result = Self::at_path(
+            metadata,
+            directory.clone(),
+            sender,
+            depot_manager,
+            configuration,
+            false,
+            Some(request),
+        )
+        .await;
+        if result.is_err() && name_for_new_folder.is_some() {
+            // Only removes a newly reserved, still-empty folder, never game data.
+            let _ = std::fs::remove_dir(directory);
+        }
+        result
     }
 
     pub async fn verify_at_path(
@@ -179,8 +230,16 @@ impl GameDownloadAgent {
         depot_manager: Arc<DepotManager>,
         configuration: UserConfiguration,
     ) -> Result<Self, ApplicationDownloadError> {
-        let mut agent =
-            Self::at_path(metadata, path, sender, depot_manager, configuration, true).await?;
+        let mut agent = Self::at_path(
+            metadata,
+            path,
+            sender,
+            depot_manager,
+            configuration,
+            true,
+            None,
+        )
+        .await?;
         let cached = borrow_db_checked()
             .applications
             .game_versions
@@ -235,6 +294,7 @@ impl GameDownloadAgent {
         depot_manager: Arc<DepotManager>,
         configuration: UserConfiguration,
         verification: bool,
+        companion: Option<CompanionRequest>,
     ) -> Result<Self, ApplicationDownloadError> {
         // Don't run by default
         let control_flag = DownloadThreadControl::new(DownloadThreadControlFlag::Stop);
@@ -267,7 +327,7 @@ impl GameDownloadAgent {
             stored_manifest.previously_installed_version = None;
         }
 
-        let result = Self {
+        let mut result = Self {
             metadata,
             control_flag,
             dl_info: Mutex::new(None),
@@ -288,9 +348,13 @@ impl GameDownloadAgent {
             depot_manager,
             configuration,
             verification,
+            companion: companion.as_ref().map(|_| CompanionPlan::default()),
         };
 
         result.ensure_manifest_exists().await?;
+        if let Some(request) = companion {
+            result.select_companions(request)?;
+        }
 
         let required_space = if verification {
             0
@@ -319,6 +383,111 @@ impl GameDownloadAgent {
         }
 
         Ok(result)
+    }
+
+    fn select_companions(
+        &mut self,
+        request: CompanionRequest,
+    ) -> Result<(), ApplicationDownloadError> {
+        let info = self
+            .dl_info
+            .get_mut()
+            .map_err(|_| ApplicationDownloadError::Lock)?
+            .as_mut()
+            .unwrap();
+        self.companion = Some(Self::prepare_companion_plan(
+            info,
+            &mut self.dropdata,
+            request,
+        )?);
+        Ok(())
+    }
+
+    fn prepare_companion_plan(
+        info: &mut DownloadInformation,
+        data: &mut DropData,
+        request: CompanionRequest,
+    ) -> Result<CompanionPlan, ApplicationDownloadError> {
+        if info.installer_package
+            || server_archive::validate(&info.manifests, &data.game_version)?.is_some()
+        {
+            return Err(server_archive::fail(
+                "This server cannot download individual files from this version",
+            ));
+        }
+        let full_file_list = &info.file_list;
+        for input in &request.inputs {
+            if !full_file_list
+                .keys()
+                .any(|name| super::companion::matches(input, name))
+            {
+                return Err(server_archive::fail(format!(
+                    "Companion path is not in the pinned version: {}",
+                    input.path
+                )));
+            }
+        }
+        let selected = full_file_list
+            .iter()
+            .filter(|(name, _)| {
+                request
+                    .inputs
+                    .iter()
+                    .any(|input| super::companion::matches(input, name))
+            })
+            .map(|(name, version)| (name.clone(), version.clone()))
+            .collect::<HashMap<_, _>>();
+        let files = super::integrity::expected_lengths(&selected, &info.manifests)?;
+        let needed = selected
+            .iter()
+            .filter(|(name, _)| {
+                !data
+                    .companion_files
+                    .has_file(&data.base_path, name, files[*name])
+            })
+            .map(|(name, version)| (name.clone(), version.clone()))
+            .collect::<HashMap<_, _>>();
+        let mut checkpointable = HashSet::new();
+        info.install_size = needed.keys().map(|name| files[name]).sum();
+        info.download_size = 0;
+        for (version, manifest) in &mut info.manifests {
+            manifest.chunks.retain(|id, chunk| {
+                if !chunk
+                    .files
+                    .iter()
+                    .any(|file| needed.get(&file.filename) == Some(version))
+                {
+                    return false;
+                }
+                if chunk.files.iter().all(|file| {
+                    full_file_list.get(&file.filename) != Some(version)
+                        || selected.contains_key(&file.filename)
+                }) {
+                    checkpointable.insert(id.clone());
+                } else {
+                    // A selected file may be missing from a previously completed install.
+                    data.set_context(id.clone(), false);
+                }
+                info.download_size += chunk
+                    .files
+                    .iter()
+                    .map(|file| file.length as u64)
+                    .sum::<u64>();
+                true
+            });
+        }
+        let complete_install = request.already_complete
+            || (selected.len() == full_file_list.len() && !request.missing_dependencies);
+        info.file_list = needed;
+        // Until this job finishes discovery must never mark the source playable.
+        data.companion_only = true;
+        Ok(CompanionPlan {
+            inputs: request.inputs,
+            files,
+            checkpointable,
+            completed: Mutex::new(HashMap::new()),
+            complete_install,
+        })
     }
 
     fn scan_filetree(&self, path: &Path) -> Result<Vec<PathBuf>, io::Error> {
@@ -355,6 +524,7 @@ impl GameDownloadAgent {
                 self.dropdata.base_path.display().to_string(),
                 None,
                 self.configuration.clone(),
+                self.dropdata.companion_only,
             );
         }
         let status = ApplicationTransientStatus::Downloading {
@@ -423,11 +593,23 @@ impl GameDownloadAgent {
                 ("archive", "true"),
                 ("installer", "true"),
                 (
+                    "companionFiles",
+                    if self.companion.is_some() || self.dropdata.companion_only {
+                        "true"
+                    } else {
+                        "false"
+                    },
+                ),
+                (
                     "previous",
-                    self.dropdata
-                        .previously_installed_version
-                        .as_ref()
-                        .map_or("", |v| v),
+                    if self.companion.is_some() || self.dropdata.companion_only {
+                        ""
+                    } else {
+                        self.dropdata
+                            .previously_installed_version
+                            .as_deref()
+                            .unwrap_or("")
+                    },
                 ),
             ],
         )
@@ -575,10 +757,10 @@ impl GameDownloadAgent {
             let dl_info = lock!(self.dl_info);
             dl_info.as_ref().unwrap().file_list.clone()
         };
-        let mut completed_chunks = {
-            let completed_chunks = lock!(self.dropdata.contexts);
-            completed_chunks.clone()
-        };
+        let mut completed_chunks = self.companion.as_ref().map_or_else(
+            || self.dropdata.get_contexts(),
+            |plan| lock!(plan.completed).clone(),
+        );
         let current_chunks = manifests_chunks
             .iter()
             .flat_map(|(_, chunks, _)| chunks.iter().map(|(id, _)| id))
@@ -634,12 +816,15 @@ impl GameDownloadAgent {
                 file_list.keys(),
             )?;
         }
-        let current_file_tree =
-            if archive_size.is_none() && !self.verification && !installer_package {
-                self.scan_filetree(base_path)?
-            } else {
-                Vec::new()
-            };
+        let current_file_tree = if archive_size.is_none()
+            && !self.verification
+            && !installer_package
+            && self.companion.is_none()
+        {
+            self.scan_filetree(base_path)?
+        } else {
+            Vec::new()
+        };
 
         for file in current_file_tree {
             if !base_path.is_dir() {
@@ -699,8 +884,17 @@ impl GameDownloadAgent {
                 Ok(value) => {
                     if let Some(chunk_id) = value {
                         completed_chunks.insert(chunk_id.clone(), true);
-                        self.dropdata.set_context(chunk_id, true);
-                        self.dropdata.write();
+                        if let Some(plan) = &self.companion {
+                            lock!(plan.completed).insert(chunk_id.clone(), true);
+                        }
+                        if self
+                            .companion
+                            .as_ref()
+                            .is_none_or(|plan| plan.checkpointable.contains(&chunk_id))
+                        {
+                            self.dropdata.set_context(chunk_id, true);
+                            self.dropdata.write();
+                        }
                     }
                     Ok(())
                 }
@@ -851,7 +1045,7 @@ impl GameDownloadAgent {
                 return Ok(false);
             }
             self.dropdata.write();
-        } else if self.verification {
+        } else if self.verification || self.companion.is_some() {
             let info = lock!(self.dl_info);
             let info = info.as_ref().unwrap();
             super::integrity::finish_lengths(
@@ -952,9 +1146,13 @@ impl GameDownloadAgent {
             self.dropdata.base_path.display().to_string(),
             Some(app_handle),
             self.configuration.clone(),
+            self.dropdata.companion_only,
         );
 
         self.dropdata.write();
+        if self.companion.is_some() {
+            app_emit!(app_handle, "update_library", ());
+        }
     }
 
     fn finish_verification(&self, app: &AppHandle, success: bool) {
@@ -1047,6 +1245,7 @@ impl Downloadable for GameDownloadAgent {
                 self.dropdata.base_path.to_string_lossy().into_owned(),
                 None,
                 self.configuration.clone(),
+                false,
             );
         }
         let status = ApplicationTransientStatus::Queued {
@@ -1089,6 +1288,9 @@ impl Downloadable for GameDownloadAgent {
                 None,
                 GameStatusManager::fetch_state(&self.metadata.id, &handle),
             );
+            if self.companion.is_some() {
+                app_emit!(app_handle, "update_library", ());
+            }
         }
     }
 
@@ -1102,6 +1304,23 @@ impl Downloadable for GameDownloadAgent {
                 server_archive::cleanup(&self.dropdata.base_path);
             }
             return Ok(());
+        }
+        if let Some(plan) = &self.companion {
+            let mut data = DropData::read(&self.dropdata.base_path)?;
+            data.companion_files
+                .record(&data.base_path, &plan.inputs, plan.files.clone())?;
+            data.write();
+            if !plan.complete_install {
+                set_partially_installed(
+                    &self.metadata,
+                    data.base_path.to_string_lossy().into_owned(),
+                    Some(app_handle),
+                    self.configuration.clone(),
+                    true,
+                );
+                app_emit!(app_handle, "update_library", ());
+                return Ok(());
+            }
         }
         on_game_complete(
             &self.metadata(),
@@ -1123,5 +1342,101 @@ impl Downloadable for GameDownloadAgent {
 
     fn status(&self) -> DownloadStatus {
         lock!(self.status).clone()
+    }
+}
+
+#[cfg(test)]
+mod companion_plan_tests {
+    use super::*;
+    use database::{
+        models::data::{InstallerLibraryInput, InstallerLibraryInputKind},
+        platform::Platform,
+    };
+    use droplet_types::FileEntry;
+
+    fn fixture() -> DownloadInformation {
+        let chunk = |names: &[&str]| ChunkData {
+            files: names
+                .iter()
+                .map(|name| FileEntry {
+                    filename: (*name).into(),
+                    start: 0,
+                    length: 3,
+                    permissions: 0o600,
+                })
+                .collect(),
+            checksum: String::new(),
+            iv: [0; 16],
+        };
+        DownloadInformation {
+            file_list: ["roms/game.rom", "other.bin", "unrelated.bin"]
+                .map(|name| (name.into(), "pinned".into()))
+                .into(),
+            manifests: [(
+                "pinned".into(),
+                Manifest {
+                    version: "2".into(),
+                    archive: None,
+                    key: [0; 16],
+                    size: 9,
+                    chunks: [
+                        ("mixed".into(), chunk(&["roms/game.rom", "other.bin"])),
+                        ("unrelated".into(), chunk(&["unrelated.bin"])),
+                    ]
+                    .into(),
+                },
+            )]
+            .into(),
+            install_size: 9,
+            download_size: 9,
+            installer_package: false,
+        }
+    }
+
+    #[test]
+    fn companion_plan_keeps_unrelated_files_out_of_mixed_chunks() {
+        let directory = tempfile::tempdir().unwrap();
+        for (path, deps, complete) in [("roms", false, false), ("", true, false), ("", false, true)]
+        {
+            let mut data = DropData::new(
+                "game".into(),
+                "pinned".into(),
+                Platform::HOST,
+                directory.path().into(),
+                Default::default(),
+                None,
+            );
+            let mut info = fixture();
+            let plan = GameDownloadAgent::prepare_companion_plan(
+                &mut info,
+                &mut data,
+                CompanionRequest {
+                    inputs: vec![InstallerLibraryInput {
+                        game_id: "game".into(),
+                        version_id: "pinned".into(),
+                        game_name: "Game".into(),
+                        version_name: "Pinned".into(),
+                        kind: InstallerLibraryInputKind::Folder,
+                        path: path.into(),
+                    }],
+                    missing_dependencies: deps,
+                    already_complete: false,
+                },
+            )
+            .unwrap();
+            assert_eq!(plan.complete_install, complete);
+            if path == "roms" {
+                assert_eq!(
+                    info.file_list.keys().collect::<Vec<_>>(),
+                    &["roms/game.rom"]
+                );
+                assert_eq!(info.manifests["pinned"].chunks.len(), 1);
+                assert_eq!((info.install_size, info.download_size), (3, 6));
+                assert!(plan.checkpointable.is_empty());
+            } else {
+                assert_eq!(info.file_list.len(), 3);
+                assert_eq!(plan.checkpointable.len(), 2);
+            }
+        }
     }
 }

@@ -67,6 +67,7 @@ export async function validateInstallerInputs(
   listArchive: Parameters<typeof installerSourceFiles>[1],
 ) {
   const seen = new Set<string>();
+  const pinned = new Map<string, string>();
   const sources = new Map<
     string,
     Awaited<ReturnType<typeof findInstallerSource>>
@@ -81,6 +82,15 @@ export async function validateInstallerInputs(
         message: "Choose distinct files or folders from another library game.",
       });
     seen.add(key);
+    if (
+      pinned.has(input.gameId) &&
+      pinned.get(input.gameId) !== input.versionId
+    )
+      throw createError({
+        statusCode: 400,
+        message: "Choose only one version of each source game.",
+      });
+    pinned.set(input.gameId, input.versionId);
     if (!sources.has(input.versionId))
       sources.set(
         input.versionId,

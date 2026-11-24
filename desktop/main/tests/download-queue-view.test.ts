@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const source = readFileSync(new URL("../pages/queue.vue", import.meta.url), "utf8");
+const source = readFileSync(
+  new URL("../pages/queue.vue", import.meta.url),
+  "utf8",
+);
 
 test("the active drop target has no highlighted wrapper", () => {
   const target = source.match(/<draggable\b[^>]*data-slot="active"[^>]*>/)?.[0];
@@ -23,12 +26,13 @@ test("pause and resume use an accessible icon button with a tooltip", () => {
   assert.doesNotMatch(button, /\{\{\s*downloadControlLabel\s*\}\}/);
 });
 
-test("speed bars and their gaps scale to the full graph width", () => {
+test("speed bars are square-cornered and keep a fixed width and gap", () => {
   const bar = source.match(
-    /<div\b[^>]*v-for="\(bar, index\) in speedHistory"[^>]*>/,
+    /<div\b[^>]*v-for="\(bar, index\) in visibleSpeedHistory"[^>]*>/,
   )?.[0];
   assert.ok(bar);
-  assert.match(bar, /min-w-0 flex-1/);
-  assert.doesNotMatch(bar, /w-\[3px\]|shrink-0/);
-  assert.match(source, /absolute inset-0 flex items-end gap-\[0\.1%\] pt-2/);
+  assert.match(bar, /\bshrink-0\b/);
+  assert.doesNotMatch(bar, /\bflex-1\b|\brounded/);
+  assert.match(bar, /width: `\$\{speedBarWidth\}px`/);
+  assert.match(source, /gap: `\$\{speedBarGap\}px`/);
 });

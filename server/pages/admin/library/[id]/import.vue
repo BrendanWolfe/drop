@@ -245,6 +245,23 @@
         v-model="installerLibraryInputs"
         :game-id="gameId"
       />
+      <label
+        v-if="installerPackage"
+        class="block rounded-xl bg-zinc-800 p-4 text-sm"
+      >
+        <span class="block font-medium text-zinc-100">{{
+          $t("library.admin.import.version.installer.launchPath")
+        }}</span>
+        <span class="mt-1 block text-xs text-zinc-400">{{
+          $t("library.admin.import.version.installer.launchPathHelp")
+        }}</span>
+        <input
+          v-model="installerLaunchPath"
+          maxlength="1024"
+          placeholder="bin/Game.exe"
+          class="mt-2 block w-full rounded-md border-0 bg-zinc-950 px-3 py-2 text-zinc-100"
+        />
+      </label>
       <!-- launch executables -->
       <div
         v-if="!installerPackage"
@@ -464,6 +481,7 @@ const versionSettings = ref<Omit<typeof ImportVersion.infer, "version" | "id">>(
 
 const versionGuesses = ref<Array<VersionGuess>>();
 const buildInstallerPackage = ref(false);
+const installerLaunchPath = ref("");
 const installerLibraryInputs = ref<
   (LibraryInput & { gameName: string; versionName: string })[]
 >([]);
@@ -493,6 +511,7 @@ async function updateCurrentlySelectedVersion(value: number) {
   installerSelection.value.executable = "";
   installerSelection.value.files = [];
   installerLibraryInputs.value = [];
+  installerLaunchPath.value = "";
   const version = versions[currentlySelectedVersion.value];
   try {
     const results = await $dropFetch(`/api/v1/admin/import/version/preload`, {
@@ -522,6 +541,7 @@ async function startImport() {
           ? {
               installerPackage: {
                 ...installerSelection.value,
+                launchPath: installerLaunchPath.value,
                 libraryInputs: installerLibraryInputs.value.map(
                   ({ gameId, versionId, kind, path }) => ({
                     gameId,

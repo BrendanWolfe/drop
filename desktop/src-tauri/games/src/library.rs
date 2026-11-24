@@ -91,6 +91,7 @@ pub fn set_partially_installed(
     install_dir: String,
     app_handle: Option<&AppHandle>,
     configuration: UserConfiguration,
+    companion_only: bool,
 ) {
     set_partially_installed_db(
         &mut borrow_db_mut_checked(),
@@ -98,6 +99,7 @@ pub fn set_partially_installed(
         install_dir,
         app_handle,
         configuration,
+        companion_only,
     );
 }
 
@@ -107,12 +109,16 @@ pub fn set_partially_installed_db(
     install_dir: String,
     app_handle: Option<&AppHandle>,
     configuration: UserConfiguration,
+    companion_only: bool,
 ) {
     db_lock.applications.transient_statuses.remove(meta);
     db_lock.applications.record_installation(
         meta,
         GameDownloadStatus::Installed {
-            install_type: InstalledGameType::PartiallyInstalled { configuration },
+            install_type: InstalledGameType::PartiallyInstalled {
+                configuration,
+                companion_only,
+            },
             version_id: meta.version.clone(),
             install_dir,
             update_available: false,
@@ -302,6 +308,7 @@ pub async fn on_game_complete(
         data.installed_version = Some(game_version.clone());
         data.setup_completed = Some(!setup_required);
         data.configuration = game_version.user_configuration.clone();
+        data.companion_only = false;
         data.write();
     }
 
