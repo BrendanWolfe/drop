@@ -10,10 +10,13 @@ use crate::interface::DatabaseInterface;
 
 pub static DB: LazyLock<DatabaseInterface> = LazyLock::new(DatabaseInterface::set_up_database);
 
-#[cfg(not(debug_assertions))]
-static DATA_ROOT_PREFIX: &str = "drop";
-#[cfg(debug_assertions)]
-static DATA_ROOT_PREFIX: &str = "drop-debug";
+const DATA_ROOT_PREFIX: &str = if cfg!(feature = "development-release") {
+    "drop-dev"
+} else if cfg!(debug_assertions) {
+    "drop-debug"
+} else {
+    "drop"
+};
 
 pub static DATA_ROOT_DIR: LazyLock<Arc<PathBuf>> = LazyLock::new(|| {
     Arc::new(

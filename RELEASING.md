@@ -50,6 +50,10 @@ the existing desktop signing secrets; see [desktop signing](desktop/README.md#on
 
 ## Automatic updates
 
+Development desktop packages use a separate app ID, executable, and data
+directory. The build uses the resolved prerelease channel, not the tag suffix,
+to select this identity and disable the in-app updater.
+
 The desktop checker only considers published, non-draft, non-prerelease releases
 whose `target_commitish` is `main` and that contain `latest.json`. It never
 selects a development release, even if its prerelease flag is accidentally unset.

@@ -7,8 +7,8 @@
         </h1>
         <div class="mt-4">
           <p class="text-sm text-zinc-400 max-w-md mx-auto">
-            Open Drop on another one of your devices, and use your account
-            dropdown to "Authorize client", and enter the code below.
+            Open your Drop server in a browser and sign in. From your account
+            menu, choose “Authorize client” and enter the code below.
           </p>
           <div
             class="mt-8 flex items-center justify-center gap-x-5 text-8xl font-bold text-zinc-100"
@@ -18,7 +18,7 @@
         </div>
         <div class="mt-10 flex items-center justify-center gap-x-6">
           <NuxtLink href="/auth" class="text-sm font-semibold text-blue-600"
-            ><span aria-hidden="true">&larr;</span> Use a different method
+            ><span aria-hidden="true">&larr;</span> Back to sign-in
           </NuxtLink>
         </div>
       </div>

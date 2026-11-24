@@ -12,7 +12,10 @@
     >
       <div class="max-w-lg">
         <slot />
-        <ProxyCleanupNotice :pending="route.query.proxyCleanupPending === '1'" class="mt-4" />
+        <ProxyCleanupNotice
+          :pending="route.query.proxyCleanupPending === '1'"
+          class="mt-4"
+        />
         <div class="mt-10">
           <div>
             <div v-if="loading" role="status">
@@ -36,14 +39,19 @@
             </div>
             <span class="inline-flex gap-x-8 items-center" v-else>
               <button
+                v-if="browserSignIn"
                 @click="() => authWrapper_wrapper()"
                 :disabled="loading"
                 class="px-3 py-1 inline-flex items-center gap-x-2 bg-zinc-700 rounded text-sm text-left font-semibold leading-7 text-white"
               >
-                Sign in with your browser <ArrowTopRightOnSquareIcon class="size-4" />
+                Sign in with your browser
+                <ArrowTopRightOnSquareIcon class="size-4" />
               </button>
-              <NuxtLink href="/auth/code" class="text-zinc-100 text-sm hover:text-zinc-300">
-                Use a code &rarr;
+              <NuxtLink
+                href="/auth/code"
+                class="text-zinc-100 text-sm hover:text-zinc-300"
+              >
+                Sign in with a code &rarr;
               </NuxtLink>
             </span>
           </div>
@@ -112,11 +120,19 @@
 <script setup lang="ts">
 import { XCircleIcon } from "@heroicons/vue/16/solid";
 import { ArrowTopRightOnSquareIcon } from "@heroicons/vue/20/solid";
+import { getIdentifier } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 
 const loading = ref(false);
 const route = useRoute();
 const error = ref<string | undefined>();
+const browserSignIn = ref(false);
+onMounted(async () => {
+  browserSignIn.value = await getIdentifier().then(
+    (id) => id !== "org.droposs.client.dev",
+    () => false,
+  );
+});
 
 let offerManualTimeout: NodeJS.Timeout | undefined;
 const offerManual = ref(false);

@@ -3,6 +3,9 @@ name = "proxy_auth"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+development-release = []
+
 [dependencies]
 async-trait = "0.1.89"
 http = "1.3.1"

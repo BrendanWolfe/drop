@@ -1,6 +1,6 @@
 [package]
 name = "drop-app"
-version = "0.4.16"
+version = "0.4.17"
 description = "The client application for the open-source, self-hosted game distribution platform Drop"
 authors = ["Drop OSS"]
 edition = "2024"
@@ -27,6 +27,9 @@ crate-type = ["cdylib", "rlib", "staticlib"]
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "drop_app_lib"
 rustflags = ["-C", "target-feature=+aes,+sse2"]
+
+[features]
+development-release = ["database/development-release", "remote/development-release"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

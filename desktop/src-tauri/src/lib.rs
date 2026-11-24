@@ -322,6 +322,14 @@ pub fn run() {
             Some(vec!["--minimize"]),
         ))
         .setup(|app| {
+            if cfg!(feature = "development-release")
+                != (app.config().identifier == "org.droposs.client.dev")
+            {
+                return Err(std::io::Error::other(
+                    "Desktop bundle identity does not match the release channel",
+                )
+                .into());
+            }
             let handle = app.handle().clone();
 
             tauri::async_runtime::block_on(async move {
@@ -347,7 +355,11 @@ pub fn run() {
                 let height = 864.0;
 
                 let main_window = WindowBuilder::new(&handle, "main")
-                    .title("Drop Desktop App")
+                    .title(if cfg!(feature = "development-release") {
+                        "Drop Desktop Dev"
+                    } else {
+                        "Drop Desktop App"
+                    })
                     .min_inner_size(1000.0, 500.0)
                     .inner_size(width, height)
                     .decorations(false)
@@ -365,7 +377,7 @@ pub fn run() {
                     .expect("failed to create frontend webview");
 
                 app.deep_link().on_open_url(move |event| {
-                    debug!("handling drop:// url");
+                    debug!("handling desktop sign-in link");
                     let binding = event.urls();
                     let url = match binding.first() {
                         Some(url) => url,
@@ -374,7 +386,12 @@ pub fn run() {
                             return;
                         }
                     };
-                    if let Some("handshake") = url.host_str() {
+                    let scheme = if cfg!(feature = "development-release") {
+                        "drop-dev"
+                    } else {
+                        "drop"
+                    };
+                    if url.scheme() == scheme && url.host_str() == Some("handshake") {
                         tauri::async_runtime::spawn(recieve_handshake(
                             handle.clone(),
                             url.path().to_string(),

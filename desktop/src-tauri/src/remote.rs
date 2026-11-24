@@ -188,6 +188,11 @@ pub async fn retry_connect(state: tauri::State<'_, Mutex<AppState>>) -> Result<(
 
 #[tauri::command]
 pub fn auth_initiate() -> Result<(), RemoteAccessError> {
+    if cfg!(feature = "development-release") {
+        return Err(RemoteAccessError::HandshakeFailed(
+            "Use a code to sign in to Drop Desktop Dev.".into(),
+        ));
+    }
     let base_url = {
         let db_lock = borrow_db_checked();
         Url::parse(&db_lock.base_url.clone())?

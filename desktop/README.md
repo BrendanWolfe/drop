@@ -31,12 +31,20 @@ Existing published releases can trigger builds too, but must target `main`
 branch. Existing published tags cannot be reused for a new manual/push build.
 See [the repository release process](../RELEASING.md) for promotion instructions.
 
-Development installers must be downloaded and installed manually. Emulator
-testing also needs the matching development server; see [portable emulators](EMULATORS.md).
+From `v0.4.17-dev`, development installers install **Drop Desktop Dev** alongside
+the stable app. Dev starts with a fresh `drop-dev` data directory, including its
+own default game folder, settings, cache, and Proton prefixes. It does not copy
+stable data or credentials. Use **Sign in with a code** and keep custom game
+download folders separate if you want each app to manage its own files.
+Older prerelease installers used the stable app identity; do not use them for
+side-by-side testing.
+
+Development installers must be downloaded and installed manually. When testing
+server changes, use the matching development server.
 
 ## Desktop updates
 
-Packaged clients check `BrendanWolfe/drop` on startup and every 30 minutes,
+Stable packaged clients check `BrendanWolfe/drop` on startup and every 30 minutes,
 independently of the configured Drop server. GitHub's latest stable release with a
 `latest.json` asset is used only when it is **not** a prerelease and its GitHub
 target branch is **main**. Drafts, development builds, legacy SHA-targeted

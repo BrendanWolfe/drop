@@ -98,6 +98,9 @@ fn status_with_metadata(app: &AppHandle, mut status: UpdateStatus) -> UpdateStat
 }
 
 fn disabled_reason() -> Option<&'static str> {
+    if cfg!(feature = "development-release") {
+        return Some("Install development updates manually from GitHub Releases.");
+    }
     if PUBLIC_KEY.is_none_or(|key| key.trim().is_empty()) {
         return Some("This build has no update signing public key configured.");
     }

@@ -49,13 +49,16 @@ pub fn commit_credentials(
     Ok(())
 }
 
+const SERVICE: &str = if cfg!(feature = "development-release") {
+    "drop-dev.reverse-proxy"
+} else if cfg!(debug_assertions) {
+    "drop-debug.reverse-proxy"
+} else {
+    "drop.reverse-proxy"
+};
+
 fn entry(url: &Url) -> Result<Entry, ProxyAuthError> {
-    let service = if cfg!(debug_assertions) {
-        "drop-debug.reverse-proxy"
-    } else {
-        "drop.reverse-proxy"
-    };
-    Entry::new(service, &server_origin(url)?).map_err(|_| ProxyAuthError::StorageUnavailable)
+    Entry::new(SERVICE, &server_origin(url)?).map_err(|_| ProxyAuthError::StorageUnavailable)
 }
 
 impl CredentialVault for OsCredentialVault {

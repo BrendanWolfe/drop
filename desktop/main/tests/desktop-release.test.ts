@@ -24,13 +24,16 @@ const script = readFileSync(
   "utf8",
 );
 
-function configureRelease(tag: string, branch = "develop") {
+function configureRelease(
+  tag: string,
+  branch = "develop",
+  prerelease?: string,
+) {
   const channel = releaseChannel({
     eventName: "workflow_dispatch",
     ref: `refs/heads/${branch}`,
     event: { inputs: { tagName: tag } },
     version: "0.4.5",
-    runNumber: "42",
   });
   const directory = mkdtempSync(join(tmpdir(), "drop-release-test-"));
   try {
@@ -46,6 +49,7 @@ function configureRelease(tag: string, branch = "develop") {
       env: {
         ...process.env,
         DROP_RELEASE_TAG: channel.tag,
+        DROP_DESKTOP_PRERELEASE: prerelease ?? String(channel.prerelease),
         DROP_UPDATER_PUBLIC_KEY: "  fixture-public-key\n",
         GITHUB_ENV: envFile,
         GITHUB_RUN_NUMBER: "42",
@@ -70,6 +74,28 @@ test("release bundling receives the verification key as well as signed-artifact 
   const { config } = configureRelease("v0.4.5", "main");
   assert.equal(config.bundle.createUpdaterArtifacts, true);
   assert.equal(config.plugins.updater.pubkey, "fixture-public-key");
+});
+
+test("dev bundles keep a distinct identity even with a stable-looking custom tag", () => {
+  const { config } = configureRelease("v0.4.5", "develop");
+  assert.equal(config.productName, "Drop Desktop Dev");
+  assert.equal(config.identifier, "org.droposs.client.dev");
+  assert.equal(config.mainBinaryName, "drop-app-dev");
+  assert.deepEqual(config.build.features, ["development-release"]);
+  assert.deepEqual(config.plugins["deep-link"].desktop.schemes, ["drop-dev"]);
+  assert.ok(
+    workflow.includes(
+      "DROP_DESKTOP_PRERELEASE: ${{ needs.prepare.outputs.prerelease }}",
+    ),
+  );
+});
+
+test("stable bundles keep their existing identity regardless of the tag", () => {
+  const { config } = configureRelease("v0.4.5-dev", "main");
+  for (const key of ["productName", "identifier", "mainBinaryName", "build"])
+    assert.equal(Object.hasOwn(config, key), false);
+  assert.equal(Object.hasOwn(config.plugins, "deep-link"), false);
+  assert.throws(() => configureRelease("v0.4.5", "main", ""));
 });
 
 test("RPM libarchive dependencies use literal names, not version expressions", () => {
