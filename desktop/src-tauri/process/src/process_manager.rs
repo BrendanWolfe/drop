@@ -557,10 +557,21 @@ impl ProcessManager<'_> {
                 .ok_or(ProcessError::NotInstalled)?;
             (setup_config.command.clone(), None)
         } else if let Some(location) = &location {
-            (
-                ParsedCommand::for_file(&location.launcher, "", target_platform)?.reconstruct(),
-                None,
-            )
+            let emulator = game_version
+                .setups
+                .iter()
+                .find(|setup| setup.platform == target_platform)
+                .and_then(|setup| setup.emulator.as_ref());
+            let target = if emulator.is_some() {
+                ParsedCommand {
+                    command: location.launcher.to_string_lossy().into_owned(),
+                    args: vec![],
+                    env: vec![],
+                }
+            } else {
+                ParsedCommand::for_file(&location.launcher, "", target_platform)?
+            };
+            (target.reconstruct(), emulator)
         } else {
             let (_, launch_config) = game_version
                 .launches
@@ -577,6 +588,15 @@ impl ProcessManager<'_> {
         };
 
         let target_command = ParsedCommand::parse(target_command)?;
+        let setup_directory = installer.then(|| {
+            let root = Path::new(install_dir);
+            let executable = root.join(&target_command.command);
+            if executable.is_file() && executable.starts_with(root) {
+                executable.parent().unwrap_or(root).to_path_buf()
+            } else {
+                root.to_path_buf()
+            }
+        });
         let mut emulator_working_directory = None;
 
         let target_launch_string = if let Some(emulator) = emulator {
@@ -671,7 +691,7 @@ impl ProcessManager<'_> {
                         .as_ref()
                         .and_then(|location| location.launcher.parent())
                 })
-                .or_else(|| installer.then(|| Path::new(install_dir)))
+                .or(setup_directory.as_deref())
                 .or_else(|| {
                     db_lock
                         .applications

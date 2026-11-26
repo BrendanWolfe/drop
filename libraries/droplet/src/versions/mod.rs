@@ -52,12 +52,25 @@ where
     if is_directory {
         let base_dir = path.to_path_buf();
         return Some(Box::new(move || {
-            Ok(Box::new(PathVersionBackend { base_dir }))
+            Ok(Box::new(PathVersionBackend {
+                base_dir,
+                only_file: None,
+            }))
         }));
     };
 
     let file_extension = path.extension().and_then(|v| v.to_str())?.to_lowercase();
     let filename = path.file_name()?.to_str()?.to_lowercase();
+    if file_extension == "exe" && path.symlink_metadata().ok()?.is_file() {
+        let base_dir = path.parent()?.to_path_buf();
+        let only_file = path.file_name()?.to_str()?.to_owned();
+        return Some(Box::new(move || {
+            Ok(Box::new(PathVersionBackend {
+                base_dir,
+                only_file: Some(only_file),
+            }))
+        }));
+    }
     if SUPPORTED_FILE_EXTENSIONS.contains(&file_extension.as_str())
         || [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz"]
             .iter()

@@ -12,6 +12,7 @@ export type QueueState = {
     meta: DownloadableMetadata;
     status: string;
     dl_progress: number | null;
+    label?: string;
     dl_current: number;
     dl_max: number;
     disk_progress: number | null;

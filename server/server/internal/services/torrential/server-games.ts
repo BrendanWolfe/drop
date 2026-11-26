@@ -17,6 +17,7 @@ export default defineQueryProcessor({
         versions: {
           select: {
             versionId: true,
+            installerAssets: { select: { id: true } },
           },
           where: {
             versionPath: {
@@ -31,7 +32,13 @@ export default defineQueryProcessor({
       type: TorrentialBoundType.SERVER_GAMES_RESPONSE,
       schema: ServerGamesResponseSchema,
       data: create(ServerGamesResponseSchema, {
-        games,
+        games: games.map((game) => ({
+          id: game.id,
+          versions: game.versions.flatMap((version) => [
+            { versionId: version.versionId },
+            ...version.installerAssets.map(({ id }) => ({ versionId: id })),
+          ]),
+        })),
       }),
     };
   },

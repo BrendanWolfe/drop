@@ -92,7 +92,8 @@
             :locate-required="installerPackage && !installerLocation"
             :show-verify="game.type !== 'Emulator'"
             :requires-update="
-              missingEmulators.length > 0 || Boolean(dependencyCheckError)
+              (!installerPackage || !!installerLocation) &&
+              (missingEmulators.length > 0 || Boolean(dependencyCheckError))
             "
             :updating-dependencies="dependencyDownloadActive"
             :checking-dependencies="checkingDependencies || checkingLocation"
@@ -809,6 +810,7 @@
     v-model="locateOpen"
     :game-id="id"
     :location="installerLocation"
+    :emulated="version?.setups?.some((setup) => !!setup.emulator)"
     @saved="installerLocation = $event"
   />
 </template>
@@ -1162,10 +1164,18 @@ const launchOptionsOpen = computed(() => launchOptions.value !== undefined);
 const steamActions = ref<{ beforeUninstall: () => Promise<boolean> }>();
 async function launch(direct = false) {
   if (checkingDependencies.value) return;
-  await refreshEmulators();
-  if (missingEmulators.value.length || dependencyCheckError.value) {
-    await repairEmulators();
-    return;
+  if (
+    !(
+      installerPackage.value &&
+      status.value.type === "Installed" &&
+      status.value.install_type.type === InstalledType.SetupRequired
+    )
+  ) {
+    await refreshEmulators();
+    if (missingEmulators.value.length || dependencyCheckError.value) {
+      await repairEmulators();
+      return;
+    }
   }
   if (
     !direct &&

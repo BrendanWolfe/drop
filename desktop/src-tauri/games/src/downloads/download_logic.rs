@@ -29,7 +29,7 @@ const STOP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 type Aes128Ctr64LE = ctr::Ctr64LE<aes::Aes128>;
 
-async fn wait_for_stop(control_flag: &DownloadThreadControl) {
+pub(super) async fn wait_for_stop(control_flag: &DownloadThreadControl) {
     while control_flag.get() != DownloadThreadControlFlag::Stop {
         tokio::time::sleep(STOP_POLL_INTERVAL).await;
     }

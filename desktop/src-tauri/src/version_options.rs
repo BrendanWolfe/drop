@@ -39,6 +39,8 @@ pub struct VersionDownloadOption {
     #[serde(default)]
     pub installer_package: bool,
     #[serde(default)]
+    pub locate_after_setup: bool,
+    #[serde(default)]
     installed_platform: Option<Platform>,
     #[serde(default)]
     proton_compatible: bool,
@@ -53,6 +55,10 @@ pub struct VersionDownloadOption {
 }
 
 impl VersionDownloadOption {
+    pub fn installer_flow(&self) -> bool {
+        self.locate_after_setup || self.installer_package
+    }
+
     pub fn folder_version_name(&self) -> &str {
         self.display_name
             .as_deref()

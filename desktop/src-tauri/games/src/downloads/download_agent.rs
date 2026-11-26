@@ -26,8 +26,9 @@ use std::fmt::Debug;
 use std::fs::{create_dir_all, remove_file};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tokio::sync::mpsc::Sender;
 use utils::{app_emit, lock};
@@ -38,7 +39,7 @@ use crate::library::{
 };
 use crate::state::GameStatusManager;
 
-use super::download_logic::download_game_chunk;
+use super::download_logic::{download_game_chunk, wait_for_stop};
 use super::drop_data::DropData;
 use super::server_archive;
 
@@ -53,6 +54,8 @@ pub struct DownloadInformation {
     download_size: u64,
     #[serde(default)]
     installer_package: bool,
+    #[serde(default)]
+    installer_flow: bool,
 }
 
 pub struct GameDownloadAgent {
@@ -66,7 +69,14 @@ pub struct GameDownloadAgent {
     pub dropdata: DropData,
     status: Mutex<DownloadStatus>,
     verification: bool,
-    companion: Option<CompanionPlan>,
+    companion_request: Option<CompanionRequest>,
+    companion: OnceLock<CompanionPlan>,
+    new_companion_folder: bool,
+    started: AtomicBool,
+    sender: Sender<DownloadManagerSignal>,
+    label: Option<String>,
+    asset: Option<database::models::data::InstallerAsset>,
+    reused_asset: AtomicBool,
 }
 
 pub struct CompanionRequest {
@@ -75,7 +85,6 @@ pub struct CompanionRequest {
     pub already_complete: bool,
 }
 
-#[derive(Default)]
 struct CompanionPlan {
     inputs: Vec<database::models::data::InstallerLibraryInput>,
     files: HashMap<String, u64>,
@@ -93,6 +102,44 @@ impl Debug for GameDownloadAgent {
 }
 
 impl GameDownloadAgent {
+    pub fn new_installer_asset(
+        metadata: DownloadableMetadata,
+        package: &Path,
+        asset: &database::models::data::InstallerAsset,
+        sender: Sender<DownloadManagerSignal>,
+        depot_manager: Arc<DepotManager>,
+    ) -> Result<Self, ApplicationDownloadError> {
+        let (directory, storage_meta) =
+            super::installer_files::prepare_asset_root(package, &metadata, asset)?;
+        let mut agent = Self::at_path(
+            storage_meta,
+            directory,
+            sender,
+            depot_manager,
+            Default::default(),
+            false,
+            None,
+        )?;
+        agent.metadata = metadata;
+        agent.asset = Some(asset.clone());
+        agent.label = Some(asset.name.clone());
+        Ok(agent)
+    }
+
+    fn is_installer_asset(&self) -> bool {
+        self.metadata.download_type == database::DownloadType::InstallerAsset
+    }
+
+    fn notify_asset_status(&self, app: &AppHandle, done: bool) {
+        if done {
+            borrow_db_mut_checked()
+                .applications
+                .transient_statuses
+                .remove(&self.metadata);
+        }
+        app_emit!(app, "installer_assets_changed", &self.metadata.id);
+    }
+
     pub async fn new_installer(
         metadata: DownloadableMetadata,
         base_dir: PathBuf,
@@ -179,7 +226,7 @@ impl GameDownloadAgent {
         depot_manager: Arc<DepotManager>,
         configuration: UserConfiguration,
     ) -> Result<Self, ApplicationDownloadError> {
-        Self::at_path(
+        let agent = Self::at_path(
             metadata,
             data_base_dir_path,
             sender,
@@ -187,11 +234,12 @@ impl GameDownloadAgent {
             configuration,
             false,
             None,
-        )
-        .await
+        )?;
+        agent.prepare().await?;
+        Ok(agent)
     }
 
-    pub async fn new_companion(
+    pub fn new_companion(
         metadata: DownloadableMetadata,
         directory: PathBuf,
         name_for_new_folder: Option<&str>,
@@ -214,13 +262,19 @@ impl GameDownloadAgent {
             configuration,
             false,
             Some(request),
-        )
-        .await;
-        if result.is_err() && name_for_new_folder.is_some() {
-            // Only removes a newly reserved, still-empty folder, never game data.
-            let _ = std::fs::remove_dir(directory);
+        );
+        match result {
+            Ok(mut agent) => {
+                agent.new_companion_folder = name_for_new_folder.is_some();
+                Ok(agent)
+            }
+            Err(error) => {
+                if name_for_new_folder.is_some() {
+                    let _ = std::fs::remove_dir(directory);
+                }
+                Err(error)
+            }
         }
-        result
     }
 
     pub async fn verify_at_path(
@@ -238,8 +292,8 @@ impl GameDownloadAgent {
             configuration,
             true,
             None,
-        )
-        .await?;
+        )?;
+        agent.prepare().await?;
         let cached = borrow_db_checked()
             .applications
             .game_versions
@@ -287,7 +341,7 @@ impl GameDownloadAgent {
         Ok(agent)
     }
 
-    async fn at_path(
+    fn at_path(
         metadata: DownloadableMetadata,
         data_base_dir_path: PathBuf,
         sender: Sender<DownloadManagerSignal>,
@@ -323,11 +377,21 @@ impl GameDownloadAgent {
             configuration.clone(),
         );
         stored_manifest.emulator = metadata.download_type == database::DownloadType::Emulator;
+        if metadata.download_type == database::DownloadType::InstallerAsset
+            && stored_manifest.installer_asset_files.take().is_some()
+        {
+            // A previously finished asset was removed or changed. Rebuild it.
+            stored_manifest.set_contexts(&[]);
+        }
         if verification {
             stored_manifest.previously_installed_version = None;
         }
+        if companion.is_some() {
+            // Until this job finishes discovery must never mark the source playable.
+            stored_manifest.companion_only = true;
+        }
 
-        let mut result = Self {
+        Ok(Self {
             metadata,
             control_flag,
             dl_info: Mutex::new(None),
@@ -348,32 +412,58 @@ impl GameDownloadAgent {
             depot_manager,
             configuration,
             verification,
-            companion: companion.as_ref().map(|_| CompanionPlan::default()),
-        };
+            companion_request: companion,
+            companion: OnceLock::new(),
+            new_companion_folder: false,
+            started: AtomicBool::new(false),
+            sender,
+            label: None,
+            asset: None,
+            reused_asset: AtomicBool::new(false),
+        })
+    }
 
-        result.ensure_manifest_exists().await?;
-        if let Some(request) = companion {
-            result.select_companions(request)?;
-        }
+    async fn prepare(&self) -> Result<(), ApplicationDownloadError> {
+        self.accept_manifest(self.fetch_manifest().await?)
+    }
 
-        let required_space = if verification {
+    fn accept_manifest(
+        &self,
+        mut info: DownloadInformation,
+    ) -> Result<(), ApplicationDownloadError> {
+        let companion = self
+            .companion_request
+            .as_ref()
+            .map(|request| Self::prepare_companion_plan(&mut info, &self.dropdata, request))
+            .transpose()?;
+
+        let required_space = if self.verification {
             0
         } else {
-            let info = lock!(result.dl_info);
-            let info = info.as_ref().unwrap();
-            let archive = server_archive::validate(&info.manifests, &result.metadata.version)?;
-            if archive.is_some() {
+            let archive = server_archive::validate(&info.manifests, &self.metadata.version)?;
+            if self.is_installer_asset() {
+                let completed = self.dropdata.get_contexts();
+                let cached_bytes: u64 = info
+                    .manifests
+                    .values()
+                    .flat_map(|manifest| &manifest.chunks)
+                    .filter(|(id, _)| completed.get(*id) == Some(&true))
+                    .flat_map(|(_, chunk)| &chunk.files)
+                    .map(|file| file.length as u64)
+                    .sum();
+                info.install_size.saturating_sub(cached_bytes)
+            } else if archive.is_some() {
                 server_archive::required_space(
-                    &result.dropdata.base_path,
-                    &result.metadata.version,
-                    &info.manifests[&result.metadata.version],
+                    &self.dropdata.base_path,
+                    &self.metadata.version,
+                    &info.manifests[&self.metadata.version],
                 )?
             } else {
                 info.install_size
             }
         };
 
-        let available_space = get_disk_available(data_base_dir_path)? as u64;
+        let available_space = get_disk_available(self.dropdata.base_path.clone())? as u64;
 
         if required_space > available_space {
             return Err(ApplicationDownloadError::DiskFull(
@@ -382,33 +472,39 @@ impl GameDownloadAgent {
             ));
         }
 
-        Ok(result)
+        if let Some(plan) = companion {
+            self.companion
+                .set(plan)
+                .map_err(|_| ApplicationDownloadError::Lock)?;
+        }
+        *lock!(self.dl_info) = Some(info);
+        Ok(())
     }
 
-    fn select_companions(
-        &mut self,
-        request: CompanionRequest,
-    ) -> Result<(), ApplicationDownloadError> {
-        let info = self
-            .dl_info
-            .get_mut()
-            .map_err(|_| ApplicationDownloadError::Lock)?
-            .as_mut()
-            .unwrap();
-        self.companion = Some(Self::prepare_companion_plan(
-            info,
-            &mut self.dropdata,
-            request,
-        )?);
-        Ok(())
+    async fn prepare_queued(
+        &self,
+        manifest: impl Future<Output = Result<DownloadInformation, ApplicationDownloadError>>,
+    ) -> Result<bool, ApplicationDownloadError> {
+        *lock!(self.status) = DownloadStatus::Preparing;
+        let _ = self.sender.try_send(DownloadManagerSignal::UpdateUIQueue);
+        // The server may be indexing an archive. Don't let the request block
+        // pause, cancel, or switching to another queued download.
+        let info = tokio::select! {
+            biased;
+            _ = wait_for_stop(&self.control_flag) => return Ok(false),
+            result = manifest => result?,
+        };
+        self.accept_manifest(info)?;
+        Ok(true)
     }
 
     fn prepare_companion_plan(
         info: &mut DownloadInformation,
-        data: &mut DropData,
-        request: CompanionRequest,
+        data: &DropData,
+        request: &CompanionRequest,
     ) -> Result<CompanionPlan, ApplicationDownloadError> {
         if info.installer_package
+            || info.installer_flow
             || server_archive::validate(&info.manifests, &data.game_version)?.is_some()
         {
             return Err(server_archive::fail(
@@ -479,10 +575,8 @@ impl GameDownloadAgent {
         let complete_install = request.already_complete
             || (selected.len() == full_file_list.len() && !request.missing_dependencies);
         info.file_list = needed;
-        // Until this job finishes discovery must never mark the source playable.
-        data.companion_only = true;
         Ok(CompanionPlan {
-            inputs: request.inputs,
+            inputs: request.inputs.clone(),
             files,
             checkpointable,
             completed: Mutex::new(HashMap::new()),
@@ -515,7 +609,11 @@ impl GameDownloadAgent {
             return Err(ApplicationDownloadError::NotInitialized);
         }
 
+        self.started.store(true, Ordering::Relaxed);
         self.dropdata.write();
+        if self.is_installer_asset() {
+            return Ok(());
+        }
         let mut db_lock = borrow_db_mut_checked();
         if !self.verification {
             set_partially_installed_db(
@@ -550,6 +648,27 @@ impl GameDownloadAgent {
 
     // Blocking
     pub async fn download(&self, app_handle: &AppHandle) -> Result<bool, ApplicationDownloadError> {
+        if let Some(asset) = &self.asset {
+            if super::installer_files::ready_asset_payload(
+                &self.dropdata.base_path,
+                &self.dropdata.game_id,
+                &self.dropdata.game_version,
+                &asset.target_path,
+            )
+            .is_some()
+            {
+                self.reused_asset.store(true, Ordering::Relaxed);
+                return Ok(true);
+            }
+        }
+        if !self.check_manifest_exists() && !self.prepare_queued(self.fetch_manifest()).await? {
+            return Ok(false);
+        }
+        if self.control_flag.get() == DownloadThreadControlFlag::Stop {
+            return Ok(false);
+        }
+        *lock!(self.status) = DownloadStatus::Downloading;
+        let _ = self.sender.try_send(DownloadManagerSignal::UpdateUIQueue);
         let archive = self.archive_size()?;
         let lease = if archive.is_some() {
             Some(server_archive::Lease::acquire(&self.dropdata.base_path)?)
@@ -575,15 +694,7 @@ impl GameDownloadAgent {
         lock!(self.dl_info).is_some()
     }
 
-    pub async fn ensure_manifest_exists(&self) -> Result<(), ApplicationDownloadError> {
-        if lock!(self.dl_info).is_some() {
-            return Ok(());
-        }
-
-        self.download_manifest().await
-    }
-
-    async fn download_manifest(&self) -> Result<(), ApplicationDownloadError> {
+    async fn fetch_manifest(&self) -> Result<DownloadInformation, ApplicationDownloadError> {
         let client = DROP_CLIENT_ASYNC.clone();
         let url = generate_url(
             &["/api/v1/client/game/manifest"],
@@ -592,9 +703,11 @@ impl GameDownloadAgent {
                 ("version", &self.metadata.version),
                 ("archive", "true"),
                 ("installer", "true"),
+                ("installerAssets", "true"),
+                ("installerFlow", "true"),
                 (
                     "companionFiles",
-                    if self.companion.is_some() || self.dropdata.companion_only {
+                    if self.dropdata.companion_only {
                         "true"
                     } else {
                         "false"
@@ -602,7 +715,7 @@ impl GameDownloadAgent {
                 ),
                 (
                     "previous",
-                    if self.companion.is_some() || self.dropdata.companion_only {
+                    if self.dropdata.companion_only {
                         ""
                     } else {
                         self.dropdata
@@ -618,6 +731,7 @@ impl GameDownloadAgent {
         let response = client
             .get(url)
             .header("Authorization", generate_authorization_header()?)
+            .timeout(Duration::from_secs(600))
             .send()
             .await
             .map_err(|e| ApplicationDownloadError::Communication(e.into()))?;
@@ -626,22 +740,15 @@ impl GameDownloadAgent {
             return Err(ApplicationDownloadError::Communication(
                 RemoteAccessError::ManifestDownloadFailed(
                     response.status(),
-                    response.text().await.unwrap(),
+                    response.text().await.unwrap_or_default(),
                 ),
             ));
         }
 
-        let manifest_download: DownloadInformation = response
+        response
             .json()
             .await
-            .map_err(|e| ApplicationDownloadError::Communication(e.into()))?;
-
-        if let Ok(mut manifest) = self.dl_info.lock() {
-            *manifest = Some(manifest_download);
-            return Ok(());
-        }
-
-        Err(ApplicationDownloadError::Lock)
+            .map_err(|e| ApplicationDownloadError::Communication(e.into()))
     }
 
     // Sets up progress for download writes
@@ -757,7 +864,7 @@ impl GameDownloadAgent {
             let dl_info = lock!(self.dl_info);
             dl_info.as_ref().unwrap().file_list.clone()
         };
-        let mut completed_chunks = self.companion.as_ref().map_or_else(
+        let mut completed_chunks = self.companion.get().map_or_else(
             || self.dropdata.get_contexts(),
             |plan| lock!(plan.completed).clone(),
         );
@@ -808,8 +915,12 @@ impl GameDownloadAgent {
 
         let file_list = &file_list;
         let base_path = archive_cache.as_ref().unwrap_or(&self.dropdata.base_path);
-        let installer_package = lock!(self.dl_info).as_ref().unwrap().installer_package;
-        if installer_package && !self.verification {
+        let installer_flow = {
+            let info = lock!(self.dl_info);
+            let info = info.as_ref().unwrap();
+            info.installer_package || info.installer_flow
+        };
+        if installer_flow && archive_size.is_none() && !self.verification {
             super::installer_files::record(
                 &self.dropdata.base_path,
                 &self.metadata.id,
@@ -818,8 +929,8 @@ impl GameDownloadAgent {
         }
         let current_file_tree = if archive_size.is_none()
             && !self.verification
-            && !installer_package
-            && self.companion.is_none()
+            && !installer_flow
+            && self.companion.get().is_none()
         {
             self.scan_filetree(base_path)?
         } else {
@@ -884,12 +995,12 @@ impl GameDownloadAgent {
                 Ok(value) => {
                     if let Some(chunk_id) = value {
                         completed_chunks.insert(chunk_id.clone(), true);
-                        if let Some(plan) = &self.companion {
+                        if let Some(plan) = self.companion.get() {
                             lock!(plan.completed).insert(chunk_id.clone(), true);
                         }
                         if self
                             .companion
-                            .as_ref()
+                            .get()
                             .is_none_or(|plan| plan.checkpointable.contains(&chunk_id))
                         {
                             self.dropdata.set_context(chunk_id, true);
@@ -1045,7 +1156,7 @@ impl GameDownloadAgent {
                 return Ok(false);
             }
             self.dropdata.write();
-        } else if self.verification || self.companion.is_some() {
+        } else if self.verification || self.companion.get().is_some() {
             let info = lock!(self.dl_info);
             let info = info.as_ref().unwrap();
             super::integrity::finish_lengths(
@@ -1136,8 +1247,18 @@ impl GameDownloadAgent {
     }
 
     pub fn cancel(&self, app_handle: &AppHandle) {
+        if self.is_installer_asset() {
+            self.notify_asset_status(app_handle, true);
+            return;
+        }
         if self.verification {
             self.finish_verification(app_handle, false);
+            return;
+        }
+        if self.companion_request.is_some() && !self.started.load(Ordering::Relaxed) {
+            // A queued companion cancelled before the first write should not
+            // create a partial installation or take over an existing one.
+            self.clear_failed_download(app_handle);
             return;
         }
         // See docs on usage
@@ -1150,8 +1271,31 @@ impl GameDownloadAgent {
         );
 
         self.dropdata.write();
-        if self.companion.is_some() {
+        if self.companion_request.is_some() {
             app_emit!(app_handle, "update_library", ());
+        }
+    }
+
+    fn clear_failed_download(&self, app: &AppHandle) {
+        if self.new_companion_folder {
+            // Never delete payloads or checkpoints, only an unused directory.
+            let _ = std::fs::remove_dir(&self.dropdata.base_path);
+        }
+        let mut db = borrow_db_mut_checked();
+        db.applications.transient_statuses.remove(&self.metadata);
+        if self.metadata.download_type == database::DownloadType::Game {
+            push_game_update(
+                app,
+                &self.metadata.id,
+                None,
+                GameStatusManager::fetch_state(&self.metadata.id, &db),
+            );
+        }
+        drop(db);
+        if self.metadata.download_type == database::DownloadType::Emulator
+            || self.companion_request.is_some()
+        {
+            app_emit!(app, "update_library", ());
         }
     }
 
@@ -1209,7 +1353,6 @@ impl GameDownloadAgent {
 #[async_trait]
 impl Downloadable for GameDownloadAgent {
     async fn download(&self, app_handle: &AppHandle) -> Result<bool, ApplicationDownloadError> {
-        *lock!(self.status) = DownloadStatus::Downloading;
         self.download(app_handle).await
     }
 
@@ -1234,8 +1377,16 @@ impl Downloadable for GameDownloadAgent {
         self.metadata.clone()
     }
 
+    fn label(&self) -> Option<String> {
+        self.label.clone()
+    }
+
     fn on_queued(&self, app_handle: &tauri::AppHandle) {
         *self.status.lock().unwrap() = DownloadStatus::Queued;
+        if self.is_installer_asset() {
+            self.notify_asset_status(app_handle, false);
+            return;
+        }
         let mut db_lock = borrow_db_mut_checked();
         if !self.verification && self.metadata.download_type == database::DownloadType::Emulator {
             self.dropdata.write();
@@ -1268,36 +1419,46 @@ impl Downloadable for GameDownloadAgent {
 
         error!("error while managing download: {error:?}");
 
+        if self.is_installer_asset() {
+            self.notify_asset_status(app_handle, true);
+            return;
+        }
+
         if self.verification {
             self.finish_verification(app_handle, false);
             return;
         }
 
-        let mut handle = borrow_db_mut_checked();
-        handle
-            .applications
-            .transient_statuses
-            .remove(&self.metadata());
-
-        if self.metadata.download_type == database::DownloadType::Emulator {
-            app_emit!(app_handle, "update_library", ());
-        } else {
-            push_game_update(
-                app_handle,
-                &self.metadata.id,
-                None,
-                GameStatusManager::fetch_state(&self.metadata.id, &handle),
-            );
-            if self.companion.is_some() {
-                app_emit!(app_handle, "update_library", ());
-            }
-        }
+        self.clear_failed_download(app_handle);
     }
 
     async fn on_complete(
         &self,
         app_handle: &tauri::AppHandle,
     ) -> Result<(), ApplicationDownloadError> {
+        if self.is_installer_asset() {
+            if self.reused_asset.load(Ordering::Relaxed) {
+                self.notify_asset_status(app_handle, true);
+                return Ok(());
+            }
+            let info = lock!(self.dl_info);
+            let info = info
+                .as_ref()
+                .ok_or(ApplicationDownloadError::NotInitialized)?;
+            super::integrity::finish_lengths(
+                &self.dropdata.base_path,
+                &info.file_list,
+                &info.manifests,
+            )?;
+            let mut data = DropData::read(&self.dropdata.base_path)?;
+            data.installer_asset_files = Some(super::integrity::expected_lengths(
+                &info.file_list,
+                &info.manifests,
+            )?);
+            data.write();
+            self.notify_asset_status(app_handle, true);
+            return Ok(());
+        }
         if self.verification {
             self.finish_verification(app_handle, true);
             if self.archive_size()?.is_some() {
@@ -1305,7 +1466,7 @@ impl Downloadable for GameDownloadAgent {
             }
             return Ok(());
         }
-        if let Some(plan) = &self.companion {
+        if let Some(plan) = self.companion.get() {
             let mut data = DropData::read(&self.dropdata.base_path)?;
             data.companion_files
                 .record(&data.base_path, &plan.inputs, plan.files.clone())?;
@@ -1390,7 +1551,81 @@ mod companion_plan_tests {
             install_size: 9,
             download_size: 9,
             installer_package: false,
+            installer_flow: false,
         }
+    }
+
+    fn selection(path: &str, missing_dependencies: bool) -> CompanionRequest {
+        CompanionRequest {
+            inputs: vec![InstallerLibraryInput {
+                name: None,
+                game_id: "game".into(),
+                version_id: "pinned".into(),
+                game_name: "Game".into(),
+                version_name: "Pinned".into(),
+                kind: InstallerLibraryInputKind::Folder,
+                path: path.into(),
+            }],
+            missing_dependencies,
+            already_complete: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn companion_is_queueable_before_manifest_and_can_resume_after_stopping() {
+        let directory = tempfile::tempdir().unwrap();
+        let (sender, mut events) = tokio::sync::mpsc::channel(4);
+        let agent = GameDownloadAgent::new_companion(
+            DownloadableMetadata::new(
+                "game".into(),
+                "pinned".into(),
+                Platform::HOST,
+                database::DownloadType::Game,
+            ),
+            directory.path().to_path_buf(),
+            Some("Source Game"),
+            sender,
+            Arc::new(DepotManager::new()),
+            Default::default(),
+            selection("roms", true),
+        )
+        .unwrap();
+        assert_eq!(agent.status(), DownloadStatus::Queued);
+        assert!(!agent.check_manifest_exists());
+        assert!(
+            !agent
+                .dropdata
+                .base_path
+                .join(super::super::drop_data::DROPDATA_PATH)
+                .exists()
+        );
+
+        agent.control_flag.set(DownloadThreadControlFlag::Go);
+        let prepare = agent.prepare_queued(std::future::pending());
+        let stop = async {
+            assert!(matches!(
+                events.recv().await,
+                Some(DownloadManagerSignal::UpdateUIQueue)
+            ));
+            assert_eq!(agent.status(), DownloadStatus::Preparing);
+            agent.control_flag.set(DownloadThreadControlFlag::Stop);
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(prepare, stop)
+        })
+        .await
+        .unwrap();
+        assert!(!result.unwrap());
+        assert!(!agent.check_manifest_exists());
+
+        agent.control_flag.set(DownloadThreadControlFlag::Go);
+        assert!(agent.prepare_queued(async { Ok(fixture()) }).await.unwrap());
+        let info = lock!(agent.dl_info);
+        assert_eq!(
+            info.as_ref().unwrap().file_list.keys().collect::<Vec<_>>(),
+            &["roms/game.rom"]
+        );
+        assert!(!agent.companion.get().unwrap().complete_install);
     }
 
     #[test]
@@ -1398,7 +1633,7 @@ mod companion_plan_tests {
         let directory = tempfile::tempdir().unwrap();
         for (path, deps, complete) in [("roms", false, false), ("", true, false), ("", false, true)]
         {
-            let mut data = DropData::new(
+            let data = DropData::new(
                 "game".into(),
                 "pinned".into(),
                 Platform::HOST,
@@ -1407,23 +1642,9 @@ mod companion_plan_tests {
                 None,
             );
             let mut info = fixture();
-            let plan = GameDownloadAgent::prepare_companion_plan(
-                &mut info,
-                &mut data,
-                CompanionRequest {
-                    inputs: vec![InstallerLibraryInput {
-                        game_id: "game".into(),
-                        version_id: "pinned".into(),
-                        game_name: "Game".into(),
-                        version_name: "Pinned".into(),
-                        kind: InstallerLibraryInputKind::Folder,
-                        path: path.into(),
-                    }],
-                    missing_dependencies: deps,
-                    already_complete: false,
-                },
-            )
-            .unwrap();
+            let plan =
+                GameDownloadAgent::prepare_companion_plan(&mut info, &data, &selection(path, deps))
+                    .unwrap();
             assert_eq!(plan.complete_install, complete);
             if path == "roms" {
                 assert_eq!(

@@ -60,6 +60,7 @@ export type GameVersion = {
   };
   setups: Array<{ platform: string }>;
   launches: Array<{ platform: string }>;
+  setups?: Array<{ platform: string; emulator?: { launchId: string } | null }>;
 };
 
 export type InstallerLocation = { root: string; launcher: string };
@@ -141,6 +142,7 @@ export type RawGameStatus = [GameStatus | null, GameStatus | null];
 
 export enum DownloadableType {
   Game = "Game",
+  InstallerAsset = "InstallerAsset",
   Emulator = "Emulator",
   Tool = "Tool",
   DLC = "DLC",

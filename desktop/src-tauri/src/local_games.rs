@@ -195,7 +195,9 @@ fn installed_package(db: &Database, id: &str) -> Result<(DownloadableMetadata, P
 #[derive(serde::Serialize)]
 pub struct InstallerCompanionFile {
     name: String,
-    path: String,
+    path: Option<String>,
+    asset_id: Option<String>,
+    queued: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -285,6 +287,7 @@ mod library_input_tests {
             DownloadType::Game,
         );
         let mut input = InstallerLibraryInput {
+            name: None,
             game_id: meta.id.clone(),
             version_id: "v2".into(),
             game_name: "ROM".into(),
@@ -394,22 +397,41 @@ pub fn fetch_installer_companion_files(id: String) -> Result<Vec<InstallerCompan
                 .to_str()
                 .map(str::to_owned)
         });
-    games::downloads::installer_files::companion_files(
+    let mut files: Vec<_> = games::downloads::installer_files::companion_files(
         &root,
         &id,
         version.installer_companion_files.as_deref(),
         legacy_executable.as_deref(),
     )
-    .map(|files| {
-        files
-            .into_iter()
-            .map(|(name, path)| InstallerCompanionFile {
-                name,
-                path: installer_picker_path(&path, &id, meta.target_platform),
-            })
-            .collect()
+    .map_err(|error| error.to_string())?
+    .into_iter()
+    .map(|(name, path)| InstallerCompanionFile {
+        name,
+        path: Some(installer_picker_path(&path, &id, meta.target_platform)),
+        asset_id: None,
+        queued: false,
     })
-    .map_err(|error| error.to_string())
+    .collect();
+    for asset in &version.installer_assets {
+        let queued = db.applications.transient_statuses.keys().any(|item| {
+            item.id == id
+                && item.version == asset.id
+                && item.download_type == database::DownloadType::InstallerAsset
+        });
+        let path = if queued {
+            None
+        } else {
+            games::downloads::installer_files::ready_asset(&root, &id, asset)
+                .map(|path| installer_picker_path(&path, &id, meta.target_platform))
+        };
+        files.push(InstallerCompanionFile {
+            name: asset.name.clone(),
+            path,
+            asset_id: Some(asset.id.clone()),
+            queued,
+        });
+    }
+    Ok(files)
 }
 
 fn installer_picker_path(path: &Path, _id: &str, _platform: Platform) -> String {
@@ -493,13 +515,17 @@ pub fn fetch_installer_location(id: String) -> Option<InstallerLocation> {
 
 #[tauri::command]
 pub async fn find_installer_launchers(id: String, root: PathBuf) -> Result<Vec<String>, String> {
-    let (meta, package, expected) = {
+    let (meta, package, expected, emulated) = {
         let db = borrow_db_checked();
         let (meta, package) = installed_package(&db, &id)?;
         let expected = db.applications.game_versions[&meta.version]
             .installer_launch_path
             .clone();
-        (meta, package, expected)
+        let emulated = db.applications.game_versions[&meta.version]
+            .setups
+            .iter()
+            .any(|setup| setup.platform == meta.target_platform && setup.emulator.is_some());
+        (meta, package, expected, emulated)
     };
     let root = process::resolution::installer_game_folder(&root, &package)?;
     let hint = expected.and_then(|path| {
@@ -512,9 +538,12 @@ pub async fn find_installer_launchers(id: String, root: PathBuf) -> Result<Vec<S
             &root.join(relative),
             &package,
             meta.target_platform,
+            emulated,
         )
         .ok()?;
-        ParsedCommand::for_file(&location.launcher, "", meta.target_platform).ok()?;
+        if !emulated {
+            ParsedCommand::for_file(&location.launcher, "", meta.target_platform).ok()?;
+        }
         Some(location.launcher.to_string_lossy().into_owned())
     });
     let mut candidates = scan_launchers(root).await?;
@@ -536,10 +565,21 @@ pub fn save_installer_location(
     if db.applications.transient_statuses.contains_key(&meta) {
         return Err("Wait for this game's current operation to finish.".into());
     }
-    let location =
-        process::resolution::installer_location(&root, &launcher, &package, meta.target_platform)?;
-    ParsedCommand::for_file(&location.launcher, "", meta.target_platform)
-        .map_err(|error| error.to_string())?;
+    let emulated = db.applications.game_versions[&meta.version]
+        .setups
+        .iter()
+        .any(|setup| setup.platform == meta.target_platform && setup.emulator.is_some());
+    let location = process::resolution::installer_location(
+        &root,
+        &launcher,
+        &package,
+        meta.target_platform,
+        emulated,
+    )?;
+    if !emulated {
+        ParsedCommand::for_file(&location.launcher, "", meta.target_platform)
+            .map_err(|error| error.to_string())?;
+    }
     db.applications
         .installer_locations
         .insert(id, location.clone());

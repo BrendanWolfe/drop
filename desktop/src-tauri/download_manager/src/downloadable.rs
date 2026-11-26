@@ -27,6 +27,9 @@ pub trait Downloadable: Send + Sync + Debug {
     fn control_flag(&self) -> DownloadThreadControl;
     fn status(&self) -> DownloadStatus;
     fn metadata(&self) -> DownloadableMetadata;
+    fn label(&self) -> Option<String> {
+        None
+    }
     fn on_queued(&self, app_handle: &AppHandle);
     fn on_error(&self, app_handle: &AppHandle, error: &ApplicationDownloadError);
     async fn on_complete(&self, app_handle: &AppHandle) -> Result<(), ApplicationDownloadError>;

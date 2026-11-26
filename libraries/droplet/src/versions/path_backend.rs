@@ -12,6 +12,51 @@ use tokio::{
 #[derive(Clone)]
 pub struct PathVersionBackend {
     pub base_dir: PathBuf,
+    pub only_file: Option<String>,
+}
+
+impl PathVersionBackend {
+    fn payload(&self, name: &str) -> anyhow::Result<PathBuf> {
+        let relative = name.strip_prefix("./").unwrap_or(name);
+        anyhow::ensure!(
+            self.only_file
+                .as_deref()
+                .is_none_or(|file| file == relative),
+            "File does not belong to this version"
+        );
+        confined_path(&self.base_dir, relative, false)
+    }
+}
+
+pub fn confined_path(
+    base: &std::path::Path,
+    relative: &str,
+    allow_root: bool,
+) -> anyhow::Result<PathBuf> {
+    use std::path::Component;
+    let mut current = base.canonicalize()?;
+    let relative = std::path::Path::new(relative);
+    anyhow::ensure!(
+        allow_root || !relative.as_os_str().is_empty(),
+        "Missing source path"
+    );
+    for part in relative.components() {
+        let Component::Normal(part) = part else {
+            return Err(anyhow!("Invalid source path"));
+        };
+        current.push(part);
+        anyhow::ensure!(
+            !current.symlink_metadata()?.is_symlink(),
+            "Linked source files are not supported"
+        );
+    }
+    if !allow_root {
+        anyhow::ensure!(
+            current.symlink_metadata()?.is_file(),
+            "Expected a regular source file"
+        );
+    }
+    Ok(current)
 }
 
 use crate::versions::{
@@ -22,6 +67,9 @@ use crate::versions::{
 #[async_trait]
 impl VersionBackend for PathVersionBackend {
     async fn list_files(&self) -> anyhow::Result<Vec<VersionFile>> {
+        if let Some(file) = &self.only_file {
+            return Ok(vec![self.peek_file(file.clone()).await?]);
+        }
         let mut vec = Vec::new();
         _list_files(&mut vec, &self.base_dir)?;
 
@@ -53,21 +101,18 @@ impl VersionBackend for PathVersionBackend {
         start: u64,
         end: u64,
     ) -> anyhow::Result<Box<dyn MinimumFileObject>> {
-        let mut file = File::open(self.base_dir.join(file.relative_filename.clone())).await?;
+        let mut file = File::open(self.payload(&file.relative_filename)?).await?;
 
         if start != 0 {
             file.seek(SeekFrom::Start(start)).await?;
         }
 
-        if end != 0 {
-            return Ok(Box::new(file.take(end - start)));
-        }
-
-        Ok(Box::new(file))
+        anyhow::ensure!(start <= end, "Invalid source file range");
+        Ok(Box::new(file.take(end - start)))
     }
 
     async fn peek_file(&self, sub_path: String) -> anyhow::Result<VersionFile> {
-        let pathbuf = self.base_dir.join(sub_path.clone());
+        let pathbuf = self.payload(&sub_path)?;
         if !pathbuf.exists() {
             return Err(anyhow!("Path doesn't exist: {}", pathbuf.to_string_lossy()));
         };

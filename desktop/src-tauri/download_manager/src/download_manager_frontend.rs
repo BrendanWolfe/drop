@@ -78,6 +78,7 @@ impl Serialize for DownloadManagerStatus {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum DownloadStatus {
     Queued,
+    Preparing,
     Downloading,
     Validating,
     Extracting,

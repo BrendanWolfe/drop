@@ -1,7 +1,4 @@
-use std::{
-    path::Path,
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use anyhow::anyhow;
 use droplet_rs::versions::types::VersionBackend;
@@ -60,9 +57,16 @@ pub async fn list_files_rpc(
     let query = ListFilesQuery::parse_from_bytes(&message.data)?;
 
     let path = query.path;
+    let strict_zip = query.strict_zip;
     let handle = tokio::runtime::Handle::current();
     let files = tokio::task::spawn_blocking(move || {
-        let backend = create_backend(&path)?;
+        let backend = if strict_zip {
+            Box::new(
+                droplet_rs::versions::archive_backend::ZipVersionBackend::strict_zip(path.into()),
+            ) as Box<dyn VersionBackend + Send + Sync>
+        } else {
+            create_backend(&path)?
+        };
         handle.block_on(backend.list_files())
     })
     .await??;

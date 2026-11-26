@@ -392,7 +392,7 @@ impl DownloadManagerBuilder {
             self.set_status(DownloadManagerStatus::Paused);
         }
 
-        send!(self.sender, DownloadManagerSignal::UpdateUIQueue);
+        self.push_ui_queue_update();
     }
 
     async fn manage_go_signal(&mut self) {
@@ -739,6 +739,9 @@ impl DownloadManagerBuilder {
         send!(self.sender, DownloadManagerSignal::Go);
     }
     fn report_activity(&self, meta: &DownloadableMetadata, state: &str, error: Option<String>) {
+        if meta.download_type == database::DownloadType::InstallerAsset {
+            return;
+        }
         let Some(session_id) = self.sessions.get(meta) else {
             return;
         };
@@ -775,6 +778,7 @@ impl DownloadManagerBuilder {
                 let val = self.download_agent_registry.get(key).unwrap();
                 QueueUpdateEventQueueData {
                     meta: DownloadableMetadata::clone(key),
+                    label: val.label(),
                     status: val.status(),
                     dl_progress: val.dl_progress().get_progress(),
                     dl_current: val.dl_progress().sum(),

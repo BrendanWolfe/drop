@@ -26,6 +26,7 @@ message ClientCertResponse {
 message GenerateManifest {
   string version_dir = 1;
   bool archive_download = 2;
+  repeated string selected_files = 3;
 }
 
 message ManifestProgress {
@@ -48,6 +49,7 @@ message HasBackendResponse {
 
 message ListFilesQuery {
   string path = 1;
+  bool strict_zip = 2;
 }
 message ListFilesResponse {
   repeated string files = 1;

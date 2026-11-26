@@ -223,6 +223,42 @@ mod archive_reader {
     }
 
     #[tokio::test]
+    async fn a_lone_exe_is_a_normal_version_and_does_not_expose_its_siblings() {
+        let directory = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir(&directory).unwrap();
+        let executable = directory.join("Setup Launcher.exe");
+        std::fs::write(&executable, b"installer").unwrap();
+        std::fs::write(directory.join("not-in-this-version.dll"), b"other version").unwrap();
+
+        let backend = crate::versions::create_backend_constructor(&executable).unwrap()().unwrap();
+        let files = backend.list_files().await.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].relative_filename, "Setup Launcher.exe");
+        assert!(
+            backend
+                .peek_file("not-in-this-version.dll".into())
+                .await
+                .is_err()
+        );
+        let mut reader = backend.reader(&files[0], 0, 9).await.unwrap();
+        assert_eq!(read_all(&mut *reader, 7).await, b"installer");
+        drop(reader);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn filesystem_companion_zip_indexing_accepts_regular_entries() {
+        let zip = zip_stored(&[("./game/eboot.bin", b"game data")]);
+        let temp = TempZip::new(&zip);
+        let files = ZipVersionBackend::strict_zip(temp.path().to_path_buf())
+            .list_files()
+            .await
+            .unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].size, 9);
+    }
+
+    #[tokio::test]
     async fn zip_reader_preserves_bytes_across_small_and_block_sized_buffers() {
         let payload = payload();
         let first = b"first".as_slice();
@@ -370,6 +406,33 @@ mod archive_reader {
             assert_eq!(manifest.size, std::fs::metadata(&path).unwrap().len());
             assert!(manifest.archive.unwrap().install_size > 0);
         }
+    }
+
+    #[tokio::test]
+    async fn selected_zip_manifest_streams_only_the_requested_entry() {
+        use crate::manifest::{ManifestWriterFactory, generate_selected_manifest};
+        let archive = TempZip::new(&zip_stored(&[
+            ("data/Mario Kart World.nup", b"only this entry"),
+            ("unrelated.bin", b"not this entry"),
+        ]));
+        let manifest = generate_selected_manifest(
+            archive.path(),
+            &["data/Mario Kart World.nup".into()],
+            |_| {},
+            |_| {},
+            None::<&dyn ManifestWriterFactory<Writer = tokio::io::SimplexStream>>,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(manifest.size, 15);
+        let files: Vec<_> = manifest
+            .chunks
+            .values()
+            .flat_map(|chunk| &chunk.files)
+            .collect();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].filename, "data/Mario Kart World.nup");
     }
 
     #[tokio::test]

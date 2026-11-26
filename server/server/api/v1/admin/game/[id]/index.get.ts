@@ -17,6 +17,7 @@ export type AdminFetchGameType = Prisma.GameGetPayload<{
   include: {
     versions: {
       include: {
+        installerAssets: { select: { id: true; name: true; targetPath: true } };
         setups: true;
         launches: {
           include: {
@@ -75,6 +76,10 @@ export default defineEventHandler<
     include: {
       versions: {
         include: {
+          installerAssets: {
+            select: { id: true, name: true, targetPath: true },
+            orderBy: { name: "asc" },
+          },
           setups: true,
           launches: {
             include: {

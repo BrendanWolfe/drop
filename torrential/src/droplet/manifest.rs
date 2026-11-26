@@ -23,6 +23,7 @@ static READER_SEMAPHORE: LazyLock<Arc<Semaphore>> = LazyLock::new(|| {
         .ok()
         .and_then(|v| str::parse::<usize>(&v).ok())
         .unwrap_or(num_cpus::get() / 2);
+    let cores = cores.max(1);
     info!("using {cores} import threads");
     Arc::new(Semaphore::new(cores))
 });
@@ -65,8 +66,9 @@ pub async fn generate_manifest_rpc(
     let manifest = if manifest_message.archive_download {
         droplet_rs::manifest::generate_archive_manifest(&path, progress, log).await?
     } else {
-        droplet_rs::manifest::generate_manifest_rusty(
+        droplet_rs::manifest::generate_selected_manifest(
             &path,
+            &manifest_message.selected_files,
             progress,
             log,
             None::<&dyn ManifestWriterFactory<Writer = SimplexStream>>,

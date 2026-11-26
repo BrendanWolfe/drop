@@ -6,22 +6,34 @@ use libarchive_drop::{
     archive::{Entry, FileType, ReadCompression, ReadFormat},
     reader::{Builder, FileReader, Reader},
 };
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::versions::types::{MinimumFileObject, VersionBackend, VersionFile};
 
 pub struct ZipVersionBackend {
     path: PathBuf,
+    strict: bool,
 }
 impl ZipVersionBackend {
     pub fn new(path: PathBuf) -> anyhow::Result<Self> {
-        Ok(Self { path })
+        Ok(Self {
+            path,
+            strict: false,
+        })
+    }
+
+    pub fn strict_zip(path: PathBuf) -> Self {
+        Self { path, strict: true }
     }
 
     fn open_archive(&self) -> Result<FileReader, anyhow::Error> {
         let mut archive = Builder::new();
-        archive.support_format(ReadFormat::All)?;
-        archive.support_compression(ReadCompression::All)?;
+        if self.strict {
+            archive.support_format(ReadFormat::Zip)?;
+        } else {
+            archive.support_format(ReadFormat::All)?;
+            archive.support_compression(ReadCompression::All)?;
+        }
         let archive = archive.open_file(&self.path)?;
 
         Ok(archive)
@@ -79,10 +91,30 @@ impl VersionBackend for ZipVersionBackend {
         let mut archive = self.open_archive()?;
         let mut results = Vec::new();
 
-        while let Some(header) = archive.next_header() {
+        while let Some(header) = if self.strict {
+            archive.next_header_checked()?
+        } else {
+            archive.next_header()
+        } {
+            if self.strict {
+                anyhow::ensure!(
+                    header.hardlink().is_none(),
+                    "ZIP companions cannot contain hard links"
+                );
+                let name = header.pathname().trim_end_matches('/');
+                if name == "." && matches!(header.filetype(), FileType::Directory) {
+                    continue;
+                }
+                droplet_types::archive_relative_path(name)?;
+            }
             match header.filetype() {
                 FileType::RegularFile => (),
+                FileType::Directory => continue,
                 _ => {
+                    anyhow::ensure!(
+                        !self.strict,
+                        "ZIP companions cannot contain links or special entries"
+                    );
                     continue;
                 }
             }
@@ -99,8 +131,8 @@ impl VersionBackend for ZipVersionBackend {
     async fn reader(
         &self,
         file: &VersionFile,
-        _start: u64,
-        _end: u64,
+        start: u64,
+        end: u64,
     ) -> anyhow::Result<Box<dyn MinimumFileObject>> {
         let mut archive = self.open_archive()?;
 
@@ -110,15 +142,24 @@ impl VersionBackend for ZipVersionBackend {
                 Some(v) => v,
                 None => return Err(anyhow!("entry not found:{}", file.relative_filename)),
             };
-            if entry.pathname() == file.relative_filename {
+            if entry.pathname() == file.relative_filename
+                && matches!(entry.filetype(), FileType::RegularFile)
+            {
                 break;
             }
         }
 
-        Ok(Box::new(ArchiveReader {
-            archive,
-            prev_block: None,
-        }))
+        anyhow::ensure!(
+            start == 0,
+            "ZIP entries must be streamed from the beginning"
+        );
+        Ok(Box::new(
+            ArchiveReader {
+                archive,
+                prev_block: None,
+            }
+            .take(end),
+        ))
     }
 
     async fn peek_file(&self, sub_path: String) -> anyhow::Result<VersionFile> {

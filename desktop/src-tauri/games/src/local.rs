@@ -87,6 +87,7 @@ pub fn register(db: &mut Database, local: LocalGame, command: Option<String>) {
         installer_companion_files: None,
         installer_library_inputs: vec![],
         installer_launch_path: None,
+        installer_assets: vec![],
         version_index: 0,
         delta: false,
         user_configuration: configuration,

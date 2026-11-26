@@ -36,3 +36,14 @@ test("speed bars are square-cornered and keep a fixed width and gap", () => {
   assert.match(bar, /width: `\$\{speedBarWidth\}px`/);
   assert.match(source, /gap: `\$\{speedBarGap\}px`/);
 });
+
+test("new speed samples append on the right and displace older bars to the left", () => {
+  const track = source.match(
+    /<div\b[^>]*class="absolute inset-0 flex items-end[^>]*>/,
+  )?.[0];
+  assert.ok(track);
+  assert.match(track, /\bjustify-end\b/);
+  assert.doesNotMatch(track, /\bflex-row-reverse\b/);
+  assert.match(source, /speedHistory\.value\.push\(value\.speed\)/);
+  assert.match(source, /speedHistory\.value\.length - capacity/);
+});

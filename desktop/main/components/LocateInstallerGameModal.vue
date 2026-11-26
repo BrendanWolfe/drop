@@ -4,8 +4,11 @@
       <div>
         <h3 class="text-base font-semibold text-zinc-100">Locate game</h3>
         <p class="mt-1 text-sm text-zinc-400">
-          Choose the folder where the installer put the game, then choose the
-          file that starts it.
+          {{
+            emulated
+              ? "Choose the installed game folder. Use the folder itself or a game file your emulator can open."
+              : "Choose the folder where the installer put the game, then choose the file that starts it."
+          }}
         </p>
       </div>
       <div>
@@ -35,6 +38,14 @@
         Looking for launch files…
       </p>
       <div v-else-if="root">
+        <button
+          v-if="emulated"
+          type="button"
+          class="min-h-10 px-2 text-blue-300 hover:underline"
+          @click="launcher = root"
+        >
+          Use game folder
+        </button>
         <label
           for="installer-launch-file"
           class="mb-1 block text-sm font-medium text-zinc-200"
@@ -56,7 +67,7 @@
         :loading="saving"
         :disabled="!launcher || scanning"
         @click="save"
-        >Save launch file</LoadingButton
+        >Save game location</LoadingButton
       >
       <button
         type="button"
@@ -77,6 +88,7 @@ import type { InstallerLocation } from "~/types";
 const props = defineProps<{
   gameId: string;
   location?: InstallerLocation | null;
+  emulated?: boolean;
 }>();
 const emit = defineEmits<{ saved: [location: InstallerLocation] }>();
 const visible = defineModel<boolean>({ required: true });
@@ -102,7 +114,7 @@ async function chooseFolder() {
       root: selected,
     });
     root.value = selected;
-    launcher.value = "";
+    launcher.value = props.emulated ? found[0] || selected : "";
     candidates.value = found;
   } catch (cause) {
     error.value = String(cause);

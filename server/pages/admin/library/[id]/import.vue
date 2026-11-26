@@ -151,6 +151,8 @@
               v-model="versionSettings.setups[launchIdx]"
               :version-guesses="versionGuesses"
               :needs-name="false"
+              :allow-emulator="installerFlow"
+              :type="type"
             />
             <button
               class="transition rounded p-1 bg-zinc-900/30 group hover:bg-red-600/30"
@@ -216,7 +218,6 @@
         v-if="
           versionSettings.onlySetup &&
           type === GameType.Game &&
-          !isEmulated &&
           versions[currentlySelectedVersion]?.type === 'local'
         "
         class="flex min-h-11 cursor-pointer items-start gap-3 rounded-xl bg-zinc-800 p-4 text-sm text-zinc-100"
@@ -235,18 +236,120 @@
           }}</span>
         </span>
       </label>
+      <label
+        v-if="
+          versionSettings.onlySetup &&
+          type === GameType.Game &&
+          !installerPackage
+        "
+        class="flex min-h-11 items-start gap-3 rounded-xl bg-zinc-800 p-4 text-sm text-zinc-100"
+      >
+        <input
+          v-model="locateAfterSetup"
+          type="checkbox"
+          :disabled="isEmulated"
+          class="mt-1 rounded border-zinc-600 bg-zinc-950"
+        />
+        <span
+          ><strong class="block">Locate the game after setup</strong
+          ><span class="block text-zinc-400"
+            >Download this version as-is, then let players run its installer and
+            locate the installed game.</span
+          ></span
+        >
+      </label>
       <InstallerPackagePicker
         v-if="installerPackage"
         v-model="installerSelection"
         :game-id="gameId"
       />
-      <InstallerLibraryInputPicker
-        v-if="installerPackage"
-        v-model="installerLibraryInputs"
-        :game-id="gameId"
-      />
+      <section
+        v-if="installerFlow"
+        class="space-y-4 rounded-xl bg-zinc-800 p-4 text-sm text-zinc-100"
+      >
+        <h3 class="font-medium">Companion files</h3>
+        <p class="text-zinc-400">
+          Add files the player supplies to the installer. The installer and its
+          support files belong to the version itself.
+        </p>
+        <InstallerLibraryInputPicker
+          v-model="installerLibraryInputs"
+          :game-id="gameId"
+        />
+        <label
+          v-for="input in installerLibraryInputs"
+          :key="`${input.versionId}:${input.kind}:${input.path}`"
+          class="block"
+        >
+          Name for {{ input.path || input.gameName }}
+          <input
+            v-model="input.name"
+            maxlength="240"
+            :placeholder="defaultInputName(input)"
+            class="mt-1 block w-full rounded-md border-0 bg-zinc-950 px-3 py-2"
+          />
+        </label>
+        <fieldset
+          v-for="(input, index) in filesystemInputs"
+          :key="input.key"
+          class="space-y-2 rounded-lg bg-zinc-900 p-3"
+        >
+          <legend>Server companion {{ index + 1 }}</legend>
+          <label class="block"
+            >Absolute server path<input
+              v-model="input.path"
+              maxlength="4096"
+              placeholder="/companions/Game.zip"
+              class="mt-1 block w-full rounded-md border-0 bg-zinc-950 px-3 py-2"
+          /></label>
+          <label class="block"
+            >Download as
+            <select
+              v-model="input.kind"
+              class="ml-2 rounded-md border-zinc-700 bg-zinc-950"
+            >
+              <option value="file">File</option>
+              <option value="folder">Folder (or unpack ZIP)</option>
+            </select></label
+          >
+          <label v-if="/\.zip$/i.test(input.path)" class="block"
+            >Path inside ZIP (optional)<input
+              v-model="input.archiveEntry"
+              maxlength="1024"
+              placeholder="Leave blank for the entire ZIP"
+              class="mt-1 block w-full rounded-md border-0 bg-zinc-950 px-3 py-2"
+          /></label>
+          <label class="block"
+            >Name on disk<input
+              v-model="input.name"
+              maxlength="240"
+              class="mt-1 block w-full rounded-md border-0 bg-zinc-950 px-3 py-2"
+          /></label>
+          <button
+            type="button"
+            class="min-h-10 px-2 text-blue-300 hover:underline"
+            @click="filesystemInputs.splice(index, 1)"
+          >
+            Remove server companion
+          </button>
+        </fieldset>
+        <button
+          type="button"
+          class="min-h-10 rounded-md bg-zinc-900 px-3 hover:bg-zinc-700 disabled:opacity-50"
+          :disabled="
+            filesystemInputs.length + installerLibraryInputs.length >= 24
+          "
+          @click="addFilesystemInput"
+        >
+          Add server path
+        </button>
+        <p class="text-xs text-zinc-400">
+          Server paths must be outside the game libraries and under a configured
+          companion root.
+        </p>
+      </section>
       <label
-        v-if="installerPackage"
+        v-if="installerFlow"
         class="block rounded-xl bg-zinc-800 p-4 text-sm"
       >
         <span class="block font-medium text-zinc-100">{{
@@ -264,7 +367,7 @@
       </label>
       <!-- launch executables -->
       <div
-        v-if="!installerPackage"
+        v-if="!versionSettings.onlySetup"
         class="relative flex flex-col gap-y-2 bg-zinc-800 p-4 rounded-xl"
       >
         <div>
@@ -347,7 +450,7 @@
       </div>
 
       <SwitchGroup
-        v-if="!versionSettings.archiveDownload && !installerPackage"
+        v-if="!versionSettings.archiveDownload && !installerFlow"
         as="div"
         class="bg-zinc-800 p-4 rounded-xl flex items-center gap-4 justify-between"
       >
@@ -481,6 +584,7 @@ const versionSettings = ref<Omit<typeof ImportVersion.infer, "version" | "id">>(
 
 const versionGuesses = ref<Array<VersionGuess>>();
 const buildInstallerPackage = ref(false);
+const locateAfterSetup = ref(isEmulated);
 const installerLaunchPath = ref("");
 const installerLibraryInputs = ref<
   (LibraryInput & { gameName: string; versionName: string })[]
@@ -499,6 +603,31 @@ const installerPackage = computed(
     versionSettings.value.onlySetup &&
     versions[currentlySelectedVersion.value]?.type === "local",
 );
+const installerFlow = computed(
+  () =>
+    type === GameType.Game &&
+    versionSettings.value.onlySetup &&
+    (isEmulated || locateAfterSetup.value || installerPackage.value),
+);
+const filesystemInputs = ref<
+  Array<
+    NonNullable<
+      typeof ImportVersion.infer.installerFlow
+    >["filesystemInputs"][number] & { key: number }
+  >
+>([]);
+let nextInputKey = 0;
+function addFilesystemInput() {
+  filesystemInputs.value.push({
+    path: "",
+    kind: "folder",
+    name: "",
+    key: nextInputKey++,
+  });
+}
+function defaultInputName(input: LibraryInput & { gameName: string }) {
+  return input.path.split("/").at(-1) || input.gameName;
+}
 
 const importLoading = ref(false);
 const importError = ref<string | undefined>();
@@ -508,8 +637,11 @@ async function updateCurrentlySelectedVersion(value: number) {
   currentlySelectedVersion.value = value;
   versionSettings.value.archiveDownload = false;
   buildInstallerPackage.value = false;
+  locateAfterSetup.value = isEmulated;
   installerSelection.value.executable = "";
   installerSelection.value.files = [];
+  delete installerSelection.value.emulatorId;
+  filesystemInputs.value = [];
   installerLibraryInputs.value = [];
   installerLaunchPath.value = "";
   const version = versions[currentlySelectedVersion.value];
@@ -537,19 +669,56 @@ async function startImport() {
       method: "POST",
       body: {
         ...versionSettings.value,
-        ...(installerPackage.value
+        launches: versionSettings.value.onlySetup
+          ? []
+          : versionSettings.value.launches,
+        ...(installerFlow.value
           ? {
-              installerPackage: {
-                ...installerSelection.value,
+              delta: false,
+              installerFlow: {
                 launchPath: installerLaunchPath.value,
                 libraryInputs: installerLibraryInputs.value.map(
-                  ({ gameId, versionId, kind, path }) => ({
+                  ({ gameId, versionId, kind, path, name, gameName }) => ({
                     gameId,
                     versionId,
                     kind,
                     path,
+                    name:
+                      name ||
+                      defaultInputName({
+                        gameId,
+                        versionId,
+                        kind,
+                        path,
+                        gameName,
+                      }),
                   }),
                 ),
+                filesystemInputs: filesystemInputs.value.map(
+                  ({ path, kind, name, archiveEntry }) => ({
+                    path,
+                    kind,
+                    name,
+                    archiveEntry: /\.zip$/i.test(path)
+                      ? archiveEntry || undefined
+                      : undefined,
+                  }),
+                ),
+              },
+            }
+          : {
+              setups: versionSettings.value.setups.map(
+                ({ platform, protonCompatible, launch }) => ({
+                  platform,
+                  protonCompatible,
+                  launch,
+                }),
+              ),
+            }),
+        ...(installerPackage.value
+          ? {
+              installerPackage: {
+                ...installerSelection.value,
               },
               archiveDownload: false,
               delta: false,

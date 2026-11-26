@@ -22,7 +22,7 @@ export function libraryPathParts(relative: string): string[] {
   return parts;
 }
 
-async function libraryEntry(base: string, relative: string) {
+export async function libraryEntry(base: string, relative: string) {
   let resolved = await realpath(base);
   for (const part of relative ? libraryPathParts(relative) : []) {
     resolved = path.join(resolved, part);
@@ -40,7 +40,11 @@ export async function listInstallerEntries(base: string, directory: string) {
       (entry) =>
         !entry.name.startsWith(".") && (entry.isDirectory() || entry.isFile()),
     )
-    .map((entry) => ({ name: entry.name, directory: entry.isDirectory() }))
+    .map((entry) => ({
+      name: entry.name,
+      directory: entry.isDirectory(),
+      ...(entry.isFile() && /\.zip$/iu.test(entry.name) ? { zip: true } : {}),
+    }))
     .sort(
       (a, b) =>
         Number(b.directory) - Number(a.directory) ||

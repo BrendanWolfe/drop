@@ -92,6 +92,35 @@
                       <span class="text-xs text-zinc-500 mono">{{
                         version.versionId
                       }}</span>
+                      <div
+                        v-if="
+                          version.installerAssets.length ||
+                          libraryCompanions(version).length
+                        "
+                        class="mt-2 text-xs text-zinc-400"
+                      >
+                        <span class="font-medium text-zinc-300">{{
+                          $t(
+                            "library.admin.import.version.installer.separateCompanions",
+                          )
+                        }}</span>
+                        <ul class="mt-1 space-y-1">
+                          <li
+                            v-for="asset in version.installerAssets"
+                            :key="asset.id"
+                            :title="asset.targetPath"
+                          >
+                            {{ asset.name }} · Server file or folder
+                          </li>
+                          <li
+                            v-for="input in libraryCompanions(version)"
+                            :key="`${input.versionId}:${input.path}`"
+                          >
+                            {{ input.name || input.path || "Game folder" }} ·
+                            {{ input.gameName }} ({{ input.versionName }})
+                          </li>
+                        </ul>
+                      </div>
                     </div>
                   </td>
                   <td class="px-3 py-4 text-sm whitespace-nowrap text-gray-400">
@@ -119,7 +148,14 @@
                     </ul>
                   </td>
                   <td class="px-3 py-4 text-sm whitespace-nowrap text-gray-400">
-                    <div v-if="version.onlySetup">
+                    <div
+                      v-if="
+                        version.locateAfterSetup || version.installerBundleId
+                      "
+                    >
+                      Locate game after setup
+                    </div>
+                    <div v-else-if="version.onlySetup">
                       {{ $t("library.admin.version.setupOnly") }}
                     </div>
                     <ul v-else class="space-y-2">
@@ -228,6 +264,29 @@ if (!game.value)
   });
 
 type VersionType = (typeof game.value.versions)[number];
+function libraryCompanions(version: VersionType) {
+  const inputs = version.installerLibraryInputs;
+  return Array.isArray(inputs)
+    ? inputs.filter(
+        (
+          input,
+        ): input is {
+          gameName: string;
+          versionName: string;
+          versionId: string;
+          path: string;
+          name?: string;
+        } =>
+          !!input &&
+          typeof input === "object" &&
+          !Array.isArray(input) &&
+          typeof input.gameName === "string" &&
+          typeof input.versionName === "string" &&
+          typeof input.versionId === "string" &&
+          typeof input.path === "string",
+      )
+    : [];
+}
 const editingEmulators = ref<VersionType>();
 
 async function updateVersionOrder() {

@@ -21,6 +21,8 @@ pub struct DownloadActivityEvent {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct QueueUpdateEventQueueData {
     pub meta: DownloadableMetadata,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub status: DownloadStatus,
     pub dl_progress: f64,
     pub dl_current: usize,

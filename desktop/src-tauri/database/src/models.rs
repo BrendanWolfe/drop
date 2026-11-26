@@ -26,6 +26,7 @@ pub mod data {
     pub type LocalGame = v1::LocalGame;
     pub type InstallerLocation = v1::InstallerLocation;
     pub type InstallerLibraryInput = v1::InstallerLibraryInput;
+    pub type InstallerAsset = v1::InstallerAsset;
     pub type InstallerLibraryInputKind = v1::InstallerLibraryInputKind;
     pub type ArchiveInstall = v1::ArchiveInstall;
     pub type ArchiveState = v1::ArchiveState;
@@ -40,7 +41,7 @@ pub mod data {
     impl PartialEq for DownloadableMetadata {
         fn eq(&self, other: &Self) -> bool {
             self.id == other.id && self.download_type == other.download_type
-                && (self.download_type != DownloadType::Emulator
+                && (!matches!(self.download_type, DownloadType::Emulator | DownloadType::InstallerAsset)
                     || (self.version == other.version && self.target_platform == other.target_platform))
         }
     }
@@ -48,7 +49,7 @@ pub mod data {
         fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
             self.id.hash(state);
             self.download_type.hash(state);
-            if self.download_type == DownloadType::Emulator {
+            if matches!(self.download_type, DownloadType::Emulator | DownloadType::InstallerAsset) {
                 self.version.hash(state);
                 self.target_platform.hash(state);
             }
@@ -149,6 +150,8 @@ pub mod data {
             pub installer_library_inputs: Vec<InstallerLibraryInput>,
             #[serde(default)]
             pub installer_launch_path: Option<String>,
+            #[serde(default)]
+            pub installer_assets: Vec<InstallerAsset>,
 
             pub version_index: usize,
             pub delta: bool,
@@ -158,6 +161,16 @@ pub mod data {
 
             pub launches: Vec<LaunchConfiguration>,
             pub setups: Vec<SetupConfiguration>,
+        }
+
+        #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+        #[serde(rename_all = "camelCase")]
+         pub struct InstallerAsset {
+            pub id: String,
+            pub name: String,
+             pub target_path: String,
+             #[serde(default)]
+             pub filesystem_key: Option<String>,
         }
 
         #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -212,11 +225,13 @@ pub mod data {
 
         #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
         #[serde(rename_all = "camelCase")]
-        pub struct SetupConfiguration {
+         pub struct SetupConfiguration {
             pub command: String,
             pub platform: Platform,
             #[serde(default = "legacy_proton_compatible")]
-            pub proton_compatible: bool,
+             pub proton_compatible: bool,
+             #[serde(default)]
+             pub emulator: Option<LaunchConfigurationEmulator>,
         }
 
         /// Device-local entries are authoritative here, never in the server cache.
@@ -245,7 +260,9 @@ pub mod data {
 
         #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
         #[serde(rename_all = "camelCase")]
-        pub struct InstallerLibraryInput {
+         pub struct InstallerLibraryInput {
+             #[serde(default)]
+             pub name: Option<String>,
             pub game_id: String,
             pub version_id: String,
             pub game_name: String,
@@ -379,6 +396,7 @@ pub mod data {
         )]
         pub enum DownloadType {
             Game,
+            InstallerAsset,
             Emulator,
             Tool,
             Dlc,

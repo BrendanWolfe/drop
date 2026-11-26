@@ -23,7 +23,10 @@ pub fn installer_game_folder(root: &Path, package: &Path) -> Result<PathBuf, Str
     // The package owns only its top-level files; some installers create a game
     // subfolder right beside setup.exe. Never treat the package itself (or one
     // of its ancestors) as the installed game.
-    if !root.is_dir() || package.starts_with(&root) {
+    if !root.is_dir()
+        || package.starts_with(&root)
+        || root.starts_with(package.join(database::install_records::INSTALLER_ASSET_DIR))
+    {
         return Err(
             "Choose the installed game's folder, not the installer download folder itself.".into(),
         );
@@ -36,10 +39,11 @@ pub fn installer_location(
     launcher: &Path,
     package: &Path,
     platform: Platform,
+    emulated: bool,
 ) -> Result<InstallerLocation, String> {
     let root = installer_game_folder(root, package)?;
     let launcher = dunce::canonicalize(launcher).map_err(|_| "Choose an existing launch file.")?;
-    if !launcher.is_file() || !launcher.starts_with(&root) {
+    if (!launcher.is_file() && !(emulated && launcher.is_dir())) || !launcher.starts_with(&root) {
         return Err("Choose a launch file inside the game folder.".into());
     }
     Ok(InstallerLocation {
@@ -63,6 +67,12 @@ pub fn located_installer_game(
         &location.launcher,
         &package,
         location.platform,
+        db.applications
+            .game_versions
+            .get(&meta.version)?
+            .setups
+            .iter()
+            .any(|setup| setup.platform == meta.target_platform && setup.emulator.is_some()),
     )
     .ok()
     .filter(|current| current.root == location.root && current.launcher == location.launcher)
@@ -84,17 +94,34 @@ mod installer_tests {
         std::fs::write(&launcher, b"game").unwrap();
         std::fs::write(&installer, b"setup").unwrap();
 
-        assert!(installer_location(&root, &launcher, &package, Platform::Windows).is_ok());
-        assert!(installer_location(&root, &installer, &package, Platform::Windows).is_err());
-        assert!(installer_location(&package, &installer, &package, Platform::Windows).is_err());
-        assert!(installer_location(temp.path(), &launcher, &package, Platform::Windows).is_err());
+        assert!(installer_location(&root, &launcher, &package, Platform::Windows, false).is_ok());
+        assert!(installer_location(&root, &installer, &package, Platform::Windows, false).is_err());
+        assert!(
+            installer_location(&package, &installer, &package, Platform::Windows, false).is_err()
+        );
+        assert!(
+            installer_location(temp.path(), &launcher, &package, Platform::Windows, false).is_err()
+        );
+        assert!(installer_location(&root, &root, &package, Platform::Windows, true).is_ok());
+        assert!(installer_location(&root, &root, &package, Platform::Windows, false).is_err());
 
         let nested = package.join("My Game");
         std::fs::create_dir(&nested).unwrap();
         let nested_launcher = nested.join("play.exe");
         std::fs::write(&nested_launcher, b"game").unwrap();
-        assert!(installer_location(&nested, &nested_launcher, &package, Platform::Windows).is_ok());
-        assert!(installer_location(&nested, &installer, &package, Platform::Windows).is_err());
+        assert!(
+            installer_location(
+                &nested,
+                &nested_launcher,
+                &package,
+                Platform::Windows,
+                false
+            )
+            .is_ok()
+        );
+        assert!(
+            installer_location(&nested, &installer, &package, Platform::Windows, false).is_err()
+        );
     }
 }
 

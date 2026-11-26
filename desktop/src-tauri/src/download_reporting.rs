@@ -100,7 +100,10 @@ pub fn start(app: &AppHandle) {
                 let server_items = queue
                     .queue
                     .iter()
-                    .filter(|item| !db.applications.local_games.contains_key(&item.meta.id))
+                    .filter(|item| {
+                        item.meta.download_type != database::DownloadType::InstallerAsset
+                            && !db.applications.local_games.contains_key(&item.meta.id)
+                    })
                     .collect::<Vec<_>>();
                 sessions.retain(|id, _| server_items.iter().any(|item| &item.meta.id == id));
                 server_items

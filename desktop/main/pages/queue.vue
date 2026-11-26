@@ -16,7 +16,9 @@
         <span class="mt-1 text-xs text-zinc-400">{{
           isPaused
             ? "Downloads paused"
-            : `${formatTime(displayStats.time)} left`
+            : queue.queue[0]?.status === "Preparing"
+              ? "Preparing files…"
+              : `${formatTime(displayStats.time)} left`
         }}</span>
       </div>
       <!-- The graph owns its own column; it can never sit behind the controls. -->
@@ -27,7 +29,7 @@
       >
         <div
           v-if="!isPaused"
-          class="absolute inset-0 flex items-end pt-2"
+          class="absolute inset-0 flex items-end justify-end pt-2"
           :style="{ gap: `${speedBarGap}px` }"
         >
           <div
@@ -99,7 +101,7 @@
         <template #item="{ element }">
           <DownloadQueueCard
             :item="element"
-            :title="title(element.meta)"
+            :title="element.label ?? title(element.meta)"
             :cover="games[element.meta.id]?.cover"
             :metadata-error="metadataErrors[element.meta.id]"
             active
@@ -151,7 +153,7 @@
         <template #item="{ element, index }">
           <DownloadQueueCard
             :item="element"
-            :title="title(element.meta)"
+            :title="element.label ?? title(element.meta)"
             :cover="games[element.meta.id]?.cover"
             :metadata-error="metadataErrors[element.meta.id]"
             :disabled="queueBusy"
@@ -677,7 +679,8 @@ watch(
     if (!dragging.value) syncQueue();
     loadGames();
     if (
-      value.queue[0]?.meta.id !== previous?.queue[0]?.meta.id ||
+      (value.queue[0] && downloadKey(value.queue[0].meta)) !==
+        (previous?.queue[0] && downloadKey(previous.queue[0].meta)) ||
       value.status !== previous?.status
     ) {
       speedHistory.value = [];

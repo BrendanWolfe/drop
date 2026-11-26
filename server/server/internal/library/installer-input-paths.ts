@@ -1,4 +1,5 @@
 export type LibraryInput = {
+  name?: string;
   gameId: string;
   versionId: string;
   kind: "file" | "folder";

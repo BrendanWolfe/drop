@@ -1,4 +1,9 @@
-use database::models::data::InstallerLibraryInputKind;
+use database::{
+    DownloadableMetadata,
+    install_records::INSTALLER_ASSET_DIR,
+    models::data::{InstallerAsset, InstallerLibraryInputKind},
+};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
     fs, io,
@@ -6,11 +11,157 @@ use std::{
 };
 
 use super::{
-    drop_data::DROPDATA_PATH,
+    drop_data::{DROPDATA_PATH, DropData},
     server_archive::{read_named_inventory, write_named_inventory},
 };
 
 const INVENTORY: &str = ".drop-installer-files";
+
+fn asset_storage(
+    package: &Path,
+    meta: &DownloadableMetadata,
+    asset: &InstallerAsset,
+) -> io::Result<(PathBuf, DownloadableMetadata)> {
+    if let Some(key) = &asset.filesystem_key {
+        if key.len() != 64 || !key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(io::Error::other("Invalid filesystem companion key"));
+        }
+        let unit = format!(
+            "{:x}",
+            Sha256::digest(format!("{key}/{}", asset.target_path))
+        );
+        let base = package
+            .parent()
+            .ok_or_else(|| io::Error::other("Missing install directory"))?;
+        Ok((
+            base.join(INSTALLER_ASSET_DIR).join(&unit),
+            DownloadableMetadata::new(
+                "filesystem-companion".into(),
+                unit,
+                database::platform::Platform::HOST,
+                database::DownloadType::InstallerAsset,
+            ),
+        ))
+    } else {
+        Ok((asset_root(package, &meta.version)?, meta.clone()))
+    }
+}
+
+pub fn asset_root(package: &Path, id: &str) -> io::Result<PathBuf> {
+    let suffix = id.strip_prefix("installer-asset-").unwrap_or("");
+    if suffix.len() != 36
+        || !suffix.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+    {
+        return Err(io::Error::other("Invalid installer companion ID"));
+    }
+    Ok(package.join(INSTALLER_ASSET_DIR).join(id))
+}
+
+pub(super) fn prepare_asset_root(
+    package: &Path,
+    meta: &DownloadableMetadata,
+    asset: &InstallerAsset,
+) -> io::Result<(PathBuf, DownloadableMetadata)> {
+    validate_root(package)?;
+    let (root, meta) = asset_storage(package, meta, asset)?;
+    let parent = root.parent().unwrap();
+    if let Err(error) = fs::create_dir(parent)
+        && error.kind() != io::ErrorKind::AlreadyExists
+    {
+        return Err(error);
+    }
+    validate_root(parent)?;
+    match fs::create_dir(&root) {
+        Ok(()) => DropData::new(
+            meta.id.clone(),
+            meta.version.clone(),
+            meta.target_platform,
+            root.clone(),
+            Default::default(),
+            None,
+        )
+        .write(),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => validate_root(&root)?,
+        Err(error) => return Err(error),
+    }
+    let data = DropData::read(&root)?;
+    if data.game_id != meta.id
+        || data.game_version != meta.version
+        || data.target_platform != meta.target_platform
+    {
+        return Err(io::Error::other(
+            "Companion folder belongs to a different download",
+        ));
+    }
+    Ok((root, meta))
+}
+
+pub fn ready_asset(package: &Path, game: &str, asset: &InstallerAsset) -> Option<PathBuf> {
+    validate_root(package).ok()?;
+    let meta = DownloadableMetadata::new(
+        game.into(),
+        asset.id.clone(),
+        database::platform::Platform::HOST,
+        database::DownloadType::InstallerAsset,
+    );
+    let (root, meta) = asset_storage(package, &meta, asset).ok()?;
+    ready_asset_payload(&root, &meta.id, &meta.version, &asset.target_path)
+}
+
+pub(super) fn ready_asset_payload(
+    root: &Path,
+    owner: &str,
+    version: &str,
+    target_path: &str,
+) -> Option<PathBuf> {
+    validate_root(root.parent()?).ok()?;
+    validate_root(root).ok()?;
+    let data = DropData::read(root).ok()?;
+    if data.game_id != owner || data.game_version != version {
+        return None;
+    }
+    let files = data.installer_asset_files?;
+    if files.is_empty()
+        || !files.iter().all(|(name, length)| {
+            super::integrity::payload_path(root, name)
+                .and_then(fs::symlink_metadata)
+                .is_ok_and(|info| info.is_file() && info.len() == *length)
+        })
+    {
+        return None;
+    }
+    let target = super::integrity::payload_path(root, target_path).ok()?;
+    target.canonicalize().ok()
+}
+
+fn remove_assets(package: &Path, game: &str) -> io::Result<()> {
+    let dir = package.join(INSTALLER_ASSET_DIR);
+    if validate_root(&dir).is_err() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if asset_root(package, name).is_ok()
+            && entry.file_type()?.is_dir()
+            && DropData::read(&entry.path())
+                .is_ok_and(|data| data.game_id == game && data.game_version == name)
+        {
+            fs::remove_dir_all(entry.path())?;
+        }
+    }
+    let _ = fs::remove_dir(dir);
+    Ok(())
+}
 
 pub fn has_inventory(root: &Path) -> bool {
     root.join(INVENTORY).symlink_metadata().is_ok()
@@ -28,10 +179,14 @@ fn validate_root(root: &Path) -> io::Result<()> {
 fn validate_names(files: impl Iterator<Item = impl AsRef<str>>) -> io::Result<()> {
     for file in files {
         let file = file.as_ref();
-        if file.starts_with('.') || file.contains(['/', '\\']) {
-            return Err(io::Error::other("Invalid installer file name"));
+        if file.split(['/', '\\']).any(|part| {
+            part.eq_ignore_ascii_case(INVENTORY) || part.eq_ignore_ascii_case(INSTALLER_ASSET_DIR)
+        }) {
+            return Err(io::Error::other(
+                "Installer content uses a reserved Drop path",
+            ));
         }
-        droplet_types::archive_relative_path(file)?;
+        super::extract::safe_relative(file)?;
     }
     Ok(())
 }
@@ -118,15 +273,26 @@ pub fn resolve_library_input(
     matches.then_some(target)
 }
 
-pub fn remove(root: &Path, id: &str) -> io::Result<()> {
+pub fn remove(root: &Path, id: &str, installed_game: Option<&Path>) -> io::Result<()> {
     validate_root(root)?;
     let files = read_named_inventory(root, id, INVENTORY)?;
     validate_names(files.iter())?;
-    for name in files
-        .iter()
-        .map(String::as_str)
-        .chain([DROPDATA_PATH, INVENTORY])
-    {
+    let archive = super::server_archive::read_inventory(root, id)?;
+    validate_names(archive.iter())?;
+    remove_assets(root, id)?;
+    for name in files.iter().chain(&archive) {
+        let payload = super::integrity::payload_path(root, name)?;
+        if installed_game.is_some_and(|game| payload.starts_with(game)) {
+            continue;
+        }
+        match fs::remove_file(payload) {
+            Ok(()) => (),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error),
+        }
+    }
+    super::server_archive::cleanup(root);
+    for name in [DROPDATA_PATH, INVENTORY, droplet_types::ARCHIVE_INVENTORY] {
         match fs::remove_file(root.join(name)) {
             Ok(()) => (),
             Err(error) if error.kind() == io::ErrorKind::NotFound => (),
@@ -143,6 +309,49 @@ pub fn remove(root: &Path, id: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn separate_companions_have_independent_queue_keys_and_cleanup() {
+        let package = tempfile::tempdir().unwrap();
+        let game = "fixture".to_owned();
+        let files = [
+            "installer-asset-07560332-cbb2-4f0b-a763-ebac9856ed00",
+            "installer-asset-07560332-cbb2-4f0b-a763-ebac9856ed01",
+        ];
+        let metas = files.map(|id| {
+            DownloadableMetadata::new(
+                game.clone(),
+                id.into(),
+                database::platform::Platform::HOST,
+                database::DownloadType::InstallerAsset,
+            )
+        });
+        let jobs: std::collections::HashSet<_> = metas.iter().collect();
+        assert_eq!(jobs.len(), 2);
+        let asset = InstallerAsset {
+            filesystem_key: None,
+            id: files[0].into(),
+            name: "test".into(),
+            target_path: "roms/data.nup".into(),
+        };
+        let (first, _) = prepare_asset_root(package.path(), &metas[0], &asset).unwrap();
+        let (second, _) = prepare_asset_root(package.path(), &metas[1], &asset).unwrap();
+        fs::create_dir(first.join("roms")).unwrap();
+        fs::write(first.join(&asset.target_path), b"rom").unwrap();
+        assert!(ready_asset(package.path(), &game, &asset).is_none());
+        let mut data = DropData::read(&first).unwrap();
+        data.installer_asset_files = Some([(asset.target_path.clone(), 3)].into());
+        data.write();
+        assert_eq!(
+            ready_asset(package.path(), &game, &asset),
+            first.join(&asset.target_path).canonicalize().ok()
+        );
+        fs::create_dir(package.path().join("Installed Game")).unwrap();
+        record(package.path(), &game, std::iter::empty()).unwrap();
+        remove(package.path(), &game, None).unwrap();
+        assert!(!first.exists() && !second.exists());
+        assert!(package.path().join("Installed Game").is_dir());
+    }
 
     #[test]
     fn reuses_an_installed_game_folder_or_the_exact_file_without_copying() {
@@ -243,11 +452,68 @@ mod tests {
         }
         record(&package, "game", &["setup v1.exe".into()]).unwrap();
         record(&package, "game", &["setup.exe".into(), "data.bin".into()]).unwrap();
-        assert!(remove(&package, "other game").is_err());
+        assert!(remove(&package, "other game", None).is_err());
         assert!(package.join("setup.exe").exists());
-        remove(&package, "game").unwrap();
+        remove(&package, "game", None).unwrap();
         assert_eq!(fs::read_dir(&package).unwrap().count(), 2);
         assert!(package.join("installed game/play.exe").is_file());
         assert!(package.join("user.txt").is_file());
+    }
+
+    #[test]
+    fn filesystem_companion_is_reused_by_another_installer_and_survives_removal() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        fs::create_dir(&first).unwrap();
+        fs::create_dir(&second).unwrap();
+        let asset = InstallerAsset {
+            id: "asset1".into(),
+            name: "Game".into(),
+            target_path: "Game".into(),
+            filesystem_key: Some("a".repeat(64)),
+        };
+        let metadata = DownloadableMetadata::new(
+            "first".into(),
+            asset.id.clone(),
+            database::platform::Platform::HOST,
+            database::DownloadType::InstallerAsset,
+        );
+        let (root, _) = prepare_asset_root(&first, &metadata, &asset).unwrap();
+        fs::create_dir(root.join("Game")).unwrap();
+        fs::write(root.join("Game/eboot.bin"), b"boot").unwrap();
+        let mut data = DropData::read(&root).unwrap();
+        data.installer_asset_files = Some([("Game/eboot.bin".into(), 4)].into());
+        data.write();
+        let first_path = ready_asset(&first, "first", &asset).unwrap();
+        let second_asset = InstallerAsset {
+            id: "asset2".into(),
+            ..asset
+        };
+        assert_eq!(
+            ready_asset(&second, "second", &second_asset),
+            Some(first_path.clone())
+        );
+        remove(&first, "first", None).unwrap();
+        assert!(first_path.is_dir());
+    }
+
+    #[test]
+    fn removes_extracted_release_files_but_leaves_the_located_game() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let game = root.join("release/game");
+        fs::create_dir_all(&game).unwrap();
+        fs::write(root.join("release/setup.exe"), b"setup").unwrap();
+        fs::write(game.join("play.exe"), b"game").unwrap();
+        super::super::server_archive::write_inventory(
+            root,
+            "test",
+            vec!["release/setup.exe".into(), "release/game/play.exe".into()],
+        )
+        .unwrap();
+        remove(root, "test", Some(&game)).unwrap();
+        assert!(!root.join("release/setup.exe").exists());
+        assert!(game.join("play.exe").is_file());
     }
 }

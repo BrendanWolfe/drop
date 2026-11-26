@@ -26,7 +26,10 @@
       >
       <p class="mt-1 text-xs text-zinc-400">
         {{ item.meta.version }} · {{ item.meta.targetPlatform
-        }}<span v-if="item.meta.downloadType === 'Emulator'"> · Emulator</span>
+        }}<span v-if="item.meta.downloadType === 'Emulator'"> · Emulator</span
+        ><span v-else-if="item.meta.downloadType === 'InstallerAsset'">
+          · Installer companion</span
+        >
       </p>
       <p v-if="metadataError" class="mt-1 text-xs text-amber-200">
         Details unavailable. Your download remains queued.
@@ -35,10 +38,19 @@
         class="mt-2 text-sm"
         :class="active ? 'text-blue-300' : 'text-zinc-400'"
       >
-        {{ active && paused ? "Paused" : item.status }}
+        {{
+          active && paused
+            ? "Paused"
+            : item.status === "Preparing"
+              ? "Preparing files…"
+              : item.status
+        }}
       </p>
     </div>
-    <div v-if="active" class="w-full space-y-2 sm:w-64">
+    <div
+      v-if="active && item.status !== 'Preparing'"
+      class="w-full space-y-2 sm:w-64"
+    >
       <div
         class="flex justify-between gap-3 text-xs tabular-nums text-zinc-300"
       >

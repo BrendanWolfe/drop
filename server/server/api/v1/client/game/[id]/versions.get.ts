@@ -2,6 +2,7 @@ import { ArkErrors, type } from "arktype";
 import type { Platform } from "~/prisma/client/enums";
 import { defineClientEventHandler } from "~/server/internal/clients/event-handler";
 import prisma from "~/server/internal/db/database";
+import type { Prisma } from "~/prisma/client/client";
 import type { GameVersionSize } from "~/server/internal/gamesize";
 import gameSizeManager from "~/server/internal/gamesize";
 import {
@@ -18,6 +19,7 @@ type VersionDownloadOption = {
   platform: Platform;
   protonCompatible: boolean;
   installerPackage?: boolean;
+  locateAfterSetup?: boolean;
   protonRequiredContent: VersionDownloadOption["requiredContent"];
   size: GameVersionSize;
   requiredContent: Array<{
@@ -35,6 +37,29 @@ type VersionDownloadOption = {
 const Query = type({
   previous: "string?",
 });
+
+const emulator = {
+  select: {
+    launchId: true,
+    platform: true,
+    protonCompatible: true,
+    gameVersion: {
+      select: {
+        game: {
+          select: {
+            mName: true,
+            mShortDescription: true,
+            mIconObjectId: true,
+            id: true,
+          },
+        },
+        versionId: true,
+        displayName: true,
+        versionPath: true,
+      },
+    },
+  },
+} satisfies Prisma.LaunchConfigurationDefaultArgs;
 
 export default defineClientEventHandler(async (h3) => {
   const id = getRouterParam(h3, "id")!;
@@ -63,6 +88,7 @@ export default defineClientEventHandler(async (h3) => {
       gameId: true,
       onlySetup: true,
       installerBundleId: true,
+      locateAfterSetup: true,
       launches: {
         select: {
           platform: true,
@@ -91,7 +117,7 @@ export default defineClientEventHandler(async (h3) => {
           },
         },
       },
-      setups: true,
+      setups: { select: { platform: true, protonCompatible: true, emulator } },
     },
   });
 
@@ -162,6 +188,7 @@ export default defineClientEventHandler(async (h3) => {
                 versionPath: v.versionPath || undefined,
                 platform,
                 ...(v.installerBundleId ? { installerPackage: true } : {}),
+                ...(v.locateAfterSetup ? { locateAfterSetup: true } : {}),
                 ...compatibility,
                 size: size!,
               }) satisfies VersionDownloadOption,

@@ -6,6 +6,25 @@
         {{ label("help") }}
       </p>
     </div>
+    <div class="flex flex-wrap items-center gap-2 text-sm text-zinc-200">
+      <EmulatorWidget v-if="emulator" :emulator="emulator" />
+      <LoadingButton :loading="false" @click="selectEmulator = true">{{
+        emulator ? "Change play emulator" : "Select play emulator"
+      }}</LoadingButton>
+      <button
+        v-if="emulator"
+        type="button"
+        class="min-h-10 px-2 text-blue-300 hover:underline"
+        @click="setEmulator(undefined)"
+      >
+        Remove
+      </button>
+    </div>
+    <ModalSelectLaunch
+      v-model="selectEmulator"
+      :filter-platform="model.platform"
+      @select="setEmulator"
+    />
     <div class="flex flex-wrap items-center gap-4 text-sm text-zinc-200">
       <label>
         {{ $t("library.admin.import.version.platform") }}
@@ -35,9 +54,9 @@
       {{ model.executable || label("notSelected") }}
     </p>
     <div class="text-sm text-zinc-300">
-      <strong>{{ label("companions") }}</strong>
+      <strong>{{ label("supportFiles") }}</strong>
       <p v-if="!model.files.length" class="text-zinc-400">
-        {{ label("noCompanions") }}
+        {{ label("noSupportFiles") }}
       </p>
       <ul v-else>
         <li
@@ -67,7 +86,7 @@
           type="button"
           class="min-h-10 rounded-md bg-zinc-800 px-3 text-sm text-zinc-200 hover:bg-zinc-700"
           :disabled="loading"
-          @click="browse(directory.split('/').slice(0, -1).join('/'))"
+          @click="up"
         >
           {{ label("up") }}
         </button>
@@ -90,7 +109,7 @@
           <button
             v-if="entry.directory"
             type="button"
-            class="min-h-10 w-full break-all px-2 text-left text-blue-300 hover:bg-zinc-800"
+            class="min-h-10 min-w-0 flex-1 break-all px-2 text-left text-blue-300 hover:bg-zinc-800"
             @click="browse(entryPath(entry.name))"
           >
             {{ `${entry.name}/` }}
@@ -111,7 +130,7 @@
               </button>
               <button
                 type="button"
-                :aria-label="label('addFile', { name: entry.name })"
+                :aria-label="label('addSupportFile', { name: entry.name })"
                 :disabled="
                   model.executable === entryPath(entry.name) ||
                   model.files.includes(entryPath(entry.name)) ||
@@ -120,7 +139,7 @@
                 class="min-h-10 px-2 text-blue-300 hover:underline disabled:text-zinc-500"
                 @click="model.files.push(entryPath(entry.name))"
               >
-                {{ label("add") }}
+                {{ label("addSupport") }}
               </button>
             </div>
           </template>
@@ -132,6 +151,7 @@
 
 <script setup lang="ts">
 import type { ImportVersion } from "~/server/api/v1/admin/import/version/index.post";
+import type { EmulatorLaunchObject } from "~/composables/frontend";
 
 const props = defineProps<{ gameId: string }>();
 const { t } = useI18n();
@@ -144,7 +164,17 @@ const model = defineModel<
   NonNullable<typeof ImportVersion.infer.installerPackage>
 >({ required: true });
 const directory = ref("");
-const entries = ref<{ name: string; directory: boolean }[]>([]);
+const emulator = ref<EmulatorLaunchObject>();
+const selectEmulator = ref(false);
+function setEmulator(value?: EmulatorLaunchObject) {
+  emulator.value = value;
+  model.value.emulatorId = value?.launchId;
+}
+watch(
+  () => model.value.platform,
+  () => setEmulator(),
+);
+const entries = ref<{ name: string; directory: boolean; zip?: boolean }[]>([]);
 const loading = ref(false);
 const error = ref("");
 
@@ -159,6 +189,10 @@ function remove(file: string) {
 function chooseInstaller(file: string) {
   model.value.executable = file;
   remove(file);
+}
+
+function up() {
+  return browse(directory.value.split("/").slice(0, -1).join("/"));
 }
 
 async function browse(folder?: string) {

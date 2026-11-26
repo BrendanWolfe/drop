@@ -52,15 +52,27 @@ pub async fn create_download_context(
 fn create_backend(
     version_data: &VersionResponse,
 ) -> Result<Box<dyn VersionBackend + Send + Sync>, StatusCode> {
-    let base_path = serde_json::from_str::<Value>(&version_data.source.options)
+    let options = serde_json::from_str::<Value>(&version_data.source.options)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let base_path = base_path.get("baseDir").unwrap().as_str().unwrap();
+    let base_path = options["baseDir"]
+        .as_str()
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let version_path = PathBuf::from(base_path);
     let version_path = version_path.join(version_data.library_path.clone());
     let version_path = match version_data.source.backend.unwrap() {
         LibraryBackend::FILESYSTEM => version_path.join(version_data.version_path.clone()),
         LibraryBackend::FLAT_FILESYSTEM => version_path,
+    };
+    let version_path = if options["installerAsset"].as_bool() == Some(true) {
+        droplet_rs::versions::path_backend::confined_path(
+            std::path::Path::new(base_path),
+            &version_data.library_path,
+            true,
+        )
+        .map_err(|_| StatusCode::NOT_FOUND)?
+    } else {
+        version_path
     };
 
     if !version_path.exists() {

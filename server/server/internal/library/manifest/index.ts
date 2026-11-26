@@ -93,6 +93,7 @@ export async function createDownloadManifestDetails(
         negativeFileList: true,
         dropletManifest: true,
         installerBundleId: true,
+        locateAfterSetup: true,
       },
     });
     if (!nextVersion)
@@ -103,6 +104,7 @@ export async function createDownloadManifestDetails(
 
     if (
       nextVersion.installerBundleId ||
+      nextVersion.locateAfterSetup ||
       castManifest(nextVersion.dropletManifest).version === "archive-v1"
     )
       throw createError({

@@ -39,14 +39,40 @@ where
     ProgFn: Fn(f32),
     Writer: AsyncWrite + Unpin,
 {
+    generate_selected_manifest(dir, &[], progress_sfn, log_sfn, factory, semaphore).await
+}
+
+pub async fn generate_selected_manifest<P, LogFn, ProgFn, Writer>(
+    dir: P,
+    selected_files: &[String],
+    progress_sfn: ProgFn,
+    log_sfn: LogFn,
+    factory: Option<&dyn ManifestWriterFactory<Writer = Writer>>,
+    semaphore: Option<&Semaphore>,
+) -> anyhow::Result<Manifest>
+where
+    P: AsRef<Path>,
+    LogFn: Fn(String) + Clone,
+    ProgFn: Fn(f32),
+    Writer: AsyncWrite + Unpin,
+{
     let backend = create_backend_constructor(dir).ok_or(anyhow!(
         "Could not create backend for path. Is this structure supported?"
     ))?()?;
-    generate_backend_manifest(backend.as_ref(), progress_sfn, log_sfn, factory, semaphore).await
+    generate_backend_manifest(
+        backend.as_ref(),
+        selected_files,
+        progress_sfn,
+        log_sfn,
+        factory,
+        semaphore,
+    )
+    .await
 }
 
 async fn generate_backend_manifest<LogFn, ProgFn, Writer>(
     backend: &(dyn VersionBackend + Send + Sync),
+    selected_files: &[String],
     progress_sfn: ProgFn,
     log_sfn: LogFn,
     factory: Option<&dyn ManifestWriterFactory<Writer = Writer>>,
@@ -57,7 +83,28 @@ where
     ProgFn: Fn(f32),
     Writer: AsyncWrite + Unpin,
 {
-    let mut files = backend.list_files().await?;
+    let mut files = if selected_files.is_empty() {
+        backend.list_files().await?
+    } else if backend.require_whole_files() {
+        let selected: std::collections::HashSet<_> = selected_files.iter().collect();
+        let files: Vec<_> = backend
+            .list_files()
+            .await?
+            .into_iter()
+            .filter(|file| selected.contains(&file.relative_filename))
+            .collect();
+        anyhow::ensure!(
+            files.len() == selected.len(),
+            "One or more archive entries are missing or duplicated"
+        );
+        files
+    } else {
+        let mut files = Vec::with_capacity(selected_files.len());
+        for name in selected_files {
+            files.push(backend.peek_file(name.clone()).await?);
+        }
+        files
+    };
     files.sort_by_key(|b| std::cmp::Reverse(b.size));
 
     log_sfn("organising files into chunks...".to_string());
@@ -120,6 +167,7 @@ where
     let semaphore = Semaphore::new(1);
     let mut manifest = generate_backend_manifest(
         &backend,
+        &[],
         progress,
         log,
         None::<&dyn ManifestWriterFactory<Writer = tokio::io::SimplexStream>>,
@@ -347,7 +395,7 @@ where
         }
     });
     let mut stream = futures::stream::iter(futures)
-        .buffer_unordered(semaphore.map(|s| s.available_permits()).unwrap_or(4))
+        .buffer_unordered(semaphore.map(|s| s.available_permits().max(1)).unwrap_or(4))
         .enumerate();
     let mut results = HashMap::new();
     let mut current_progress = 0f32;

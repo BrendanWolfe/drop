@@ -281,3 +281,4 @@ mod tests {
         }
     }
 }
+pub const INSTALLER_ASSET_DIR: &str = ".drop-installer-assets";

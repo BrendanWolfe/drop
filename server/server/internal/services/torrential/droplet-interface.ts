@@ -274,11 +274,13 @@ class DropletInterfaceManager {
     progress: (v: number) => void,
     log: (v: string) => void,
     archiveDownload = false,
+    selectedFiles: string[] = [],
   ) {
     const messageId = crypto.randomUUID();
     const manifestGenerationRequest = create(GenerateManifestSchema, {
       versionDir,
       archiveDownload,
+      selectedFiles,
     });
 
     await TORRENTIAL_SERVICE.writeMessage(messageId, {
@@ -336,10 +338,11 @@ class DropletInterfaceManager {
     );
   }
 
-  async listFiles(path: string) {
+  async listFiles(path: string, strictZip = false) {
     return await this.createDropletFunction(
       create(ListFilesQuerySchema, {
         path,
+        strictZip,
       }),
       ListFilesQuerySchema,
       TorrentialBoundType.LIST_FILES_QUERY,

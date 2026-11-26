@@ -1,4 +1,36 @@
 <template>
+  <details
+    v-if="supportFiles.length"
+    class="mt-4 max-w-2xl rounded-xl bg-zinc-900/90 p-4 text-sm text-zinc-300 ring-1 ring-white/10"
+  >
+    <summary class="cursor-pointer font-semibold text-zinc-100">
+      Installer files
+    </summary>
+    <p class="mt-2 text-zinc-400">
+      These support files were downloaded with the installer.
+    </p>
+    <ul class="mt-2 list-inside list-disc space-y-1">
+      <li
+        v-for="file in supportFiles"
+        :key="file.name"
+        class="flex items-center justify-between gap-2"
+      >
+        <span class="break-all">{{ file.name }}</span>
+        <button
+          v-if="file.path"
+          type="button"
+          class="min-h-10 shrink-0 px-2 text-blue-300 hover:underline"
+          :aria-label="`Copy path for ${file.name}`"
+          @click="copyPath({ ...file, key: `installer:${file.name}` }, $event)"
+        >
+          {{ copiedFile === `installer:${file.name}` ? "Copied" : "Copy path" }}
+        </button>
+      </li>
+    </ul>
+  </details>
+  <p v-if="copyError" role="alert" class="mt-2 text-sm text-amber-200">
+    {{ copyError }}
+  </p>
   <section
     v-if="rows.length || loadError || inputError"
     aria-labelledby="installer-files-title"
@@ -9,7 +41,7 @@
         id="installer-files-title"
         class="text-sm font-semibold text-zinc-100"
       >
-        Installer files
+        Companion files
       </h2>
       <p class="mt-1 text-sm text-zinc-400">
         If the installer asks for a file or folder, copy its path and paste it
@@ -49,6 +81,11 @@
                   : inputStatus[file.source.status.type]
               }}</span
             >
+            <span
+              v-else-if="file.status"
+              class="block px-1 text-xs text-zinc-400"
+              >{{ file.status }}</span
+            >
             <input
               v-if="file.path"
               :value="file.path"
@@ -83,7 +120,7 @@
       class="min-h-10 rounded-md bg-zinc-800 px-3 text-sm font-medium text-zinc-100 hover:bg-zinc-700 disabled:opacity-50"
       @click="retry"
     >
-      {{ retrying ? "Checking source games…" : "Download missing files" }}
+      {{ retrying ? "Checking companion files…" : "Download missing files" }}
     </button>
     <p
       v-if="downloadError"
@@ -91,9 +128,6 @@
       class="whitespace-pre-line text-sm text-amber-200"
     >
       {{ downloadError }}
-    </p>
-    <p v-if="copyError" role="alert" class="text-sm text-amber-200">
-      {{ copyError }}
     </p>
     <p role="status" class="sr-only">
       {{
@@ -109,7 +143,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-type CompanionFile = { name: string; path: string };
+type CompanionFile = {
+  name: string;
+  path: string | null;
+  asset_id: string | null;
+  queued: boolean;
+};
 type LibraryInput = {
   gameId: string;
   gameName: string;
@@ -117,6 +156,7 @@ type LibraryInput = {
   versionName: string;
   kind: "file" | "folder";
   path: string;
+  name?: string;
   copyPath: string | null;
   status: { type: keyof typeof inputStatus };
 };
@@ -132,15 +172,31 @@ type FileRow = {
   name: string;
   path: string | null;
   source?: LibraryInput;
+  status?: string;
 };
 const props = defineProps<{ gameId: string; running: boolean }>();
 const files = ref<CompanionFile[]>([]);
+const supportFiles = computed(() =>
+  files.value.filter((file) => !file.asset_id),
+);
 const inputs = ref<LibraryInput[]>([]);
 const rows = computed<FileRow[]>(() => [
-  ...files.value.map((file) => ({ ...file, key: `bundled:${file.name}` })),
+  ...files.value
+    .filter((file) => file.asset_id)
+    .map((file) => ({
+      ...file,
+      key: file.asset_id ?? `bundled:${file.name}`,
+      status: file.asset_id
+        ? file.path
+          ? "Ready to use"
+          : file.queued
+            ? "In the download queue"
+            : "Not downloaded yet"
+        : undefined,
+    })),
   ...inputs.value.map((source) => ({
     key: `${source.versionId}:${source.kind}:${source.path}`,
-    name: source.path || "Game folder",
+    name: source.name || source.path || "Game folder",
     path: source.copyPath,
     source,
   })),
@@ -151,11 +207,13 @@ const inputError = ref(false);
 const copyError = ref("");
 const downloadError = ref("");
 const retrying = ref(false);
-const canRetry = computed(() =>
-  inputs.value.some(
-    ({ status }) =>
-      status.type === "downloadNeeded" || status.type === "missing",
-  ),
+const canRetry = computed(
+  () =>
+    files.value.some((file) => file.asset_id && !file.path && !file.queued) ||
+    inputs.value.some(
+      ({ status }) =>
+        status.type === "downloadNeeded" || status.type === "missing",
+    ),
 );
 let request = 0;
 const unlisteners: (() => void)[] = [];
@@ -176,7 +234,12 @@ async function refresh() {
       ? "Could not read the downloaded files. Try opening the installer folder from the game menu."
       : "";
   inputError.value = reused.status === "rejected";
-  if (!inputError.value && inputs.value.every((input) => input.copyPath))
+  if (
+    !inputError.value &&
+    !loadError.value &&
+    inputs.value.every((input) => input.copyPath) &&
+    files.value.every((file) => file.path)
+  )
     downloadError.value = "";
 }
 
@@ -199,6 +262,9 @@ onMounted(() => {
   window.addEventListener("focus", refresh);
   for (const listener of [
     listen("update_library", refresh),
+    listen<string>("installer_assets_changed", ({ payload }) => {
+      if (payload === props.gameId) void refresh();
+    }),
     listen<[string, string]>("installer_companion_error", ({ payload }) => {
       if (payload[0] === props.gameId) downloadError.value = payload[1];
     }),

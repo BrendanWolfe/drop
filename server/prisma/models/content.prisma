@@ -158,10 +158,12 @@ model GameVersion {
   setups   SetupConfiguration[]
 
   onlySetup Boolean @default(false)
+  locateAfterSetup Boolean @default(false)
   installerBundleId String? @unique
   installerLibraryInputs Json?
   installerLaunchPath String?
   companionArchiveManifest Json?
+  installerAssets InstallerAsset[]
 
   dropletManifest  Json // Results from droplet
   fileList         String[] // List of all files, for delta updates
@@ -176,6 +178,22 @@ model GameVersion {
   @@index([gameId])
 }
 
+model InstallerAsset {
+  id String @id
+  versionId String
+  version GameVersion @relation(fields: [versionId], references: [versionId], onDelete: Cascade)
+  name String
+  sourcePath String
+  targetPath String
+  filesystemKind String?
+  filesystemKey String?
+  filesystemEntry String?
+  manifest Json
+
+  @@index([versionId])
+  @@index([filesystemKey])
+}
+
 model SetupConfiguration {
   setupId String @id @default(uuid())
 
@@ -183,6 +201,8 @@ model SetupConfiguration {
 
   platform Platform
   protonCompatible Boolean @default(false)
+  emulatorId String?
+  emulator LaunchConfiguration? @relation("installerEmulator", fields: [emulatorId], references: [launchId], onDelete: Restrict)
 
   versionId   String
   gameVersion GameVersion @relation(fields: [versionId], references: [versionId], onDelete: Cascade, onUpdate: Cascade)
@@ -212,6 +232,7 @@ model LaunchConfiguration {
   gameVersion GameVersion @relation(fields: [versionId], references: [versionId], onDelete: Cascade, onUpdate: Cascade)
 
   emulations LaunchConfiguration[] @relation("emulator")
+  installerEmulations SetupConfiguration[] @relation("installerEmulator")
 }
 
 // A save slot for a game

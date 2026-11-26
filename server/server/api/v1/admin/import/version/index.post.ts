@@ -29,17 +29,39 @@ export const ImportVersion = type({
     platform: type.valueOf(Platform),
     protonCompatible: "boolean?",
     launch: "string",
+    emulatorId: "string.uuid?",
   }).array(),
 
   onlySetup: "boolean = false",
   delta: "boolean = false",
   archiveDownload: "boolean = false",
+  "installerFlow?": type({
+    "launchPath?": "string <= 1024",
+    libraryInputs: type({
+      gameId: "string.uuid",
+      versionId: "string.uuid",
+      kind: "'file' | 'folder'",
+      path: "string <= 1024",
+      name: "string <= 240",
+    })
+      .array()
+      .atMostLength(24),
+    filesystemInputs: type({
+      path: "string <= 4096",
+      kind: "'file' | 'folder'",
+      name: "string <= 240",
+      "archiveEntry?": "string <= 1024",
+    })
+      .array()
+      .atMostLength(24),
+  }),
   "installerPackage?": type({
     executable: "string",
     "launchPath?": "string <= 1024",
     files: "string[] <= 1000",
     platform: type.valueOf(Platform),
     protonCompatible: "boolean?",
+    emulatorId: "string.uuid?",
     "libraryInputs?": type({
       gameId: "string.uuid",
       versionId: "string.uuid",

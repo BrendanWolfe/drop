@@ -64,7 +64,14 @@ jobs:
             gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$(git rev-parse HEAD)"
           fi
           if ! gh release view "$RELEASE_TAG" --json apiUrl > /dev/null; then
-            args=(--target "$RELEASE_BRANCH" --title "Desktop $RELEASE_TAG" --notes "Desktop build from commit $GITHUB_SHA ($RELEASE_BRANCH)." --draft --verify-tag)
+            version=$(node -p "require('./desktop/src-tauri/tauri.conf.json').version")
+            notes=".github/release-notes/$version.md"
+            args=(--target "$RELEASE_BRANCH" --title "Desktop $RELEASE_TAG" --draft --verify-tag)
+            if [[ -f "$notes" ]]; then
+              args+=(--notes-file "$notes")
+            else
+              args+=(--notes "Desktop build from commit $GITHUB_SHA ($RELEASE_BRANCH).")
+            fi
             if [[ "$PRERELEASE" == "true" ]]; then args+=(--prerelease); fi
             gh release create "$RELEASE_TAG" "${args[@]}"
           fi

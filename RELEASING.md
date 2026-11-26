@@ -33,6 +33,10 @@ same versions regardless of their workflow run numbers. No numbered build
 suffixes are added. Bump the application version before publishing another
 desktop build; published tags remain pinned to their original commits.
 Stable major/minor version aliases are generated only for main builds.
+On automatic releases, `.github/release-notes/<VERSION>.md` is used as the
+release body when present. For manual releases, include the same compatibility
+notes when publishing. The first release containing installer version intent
+must publish matching Desktop and Server/Torrential builds.
 Development image version tags are prefixed with `develop-`, even for custom
 tags, so a development build named `v0.4.6` cannot overwrite the stable image.
 

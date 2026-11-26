@@ -3,8 +3,10 @@ import aclManager from "~/server/internal/acls";
 import prisma from "~/server/internal/db/database";
 import libraryManager from "~/server/internal/library";
 import { listInstallerEntries } from "~/server/internal/library/installer-files";
+import { browseInstallerZip } from "~/server/internal/library/installer-assets";
+import { dropletInterface } from "~/server/internal/services/torrential/droplet-interface";
 
-const Query = type({ id: "string", directory: "string?" });
+const Query = type({ id: "string", directory: "string?", archive: "string?" });
 
 export default defineEventHandler(async (event) => {
   if (!(await aclManager.allowSystemACL(event, ["import:version:new"])))
@@ -29,11 +31,18 @@ export default defineEventHandler(async (event) => {
       statusMessage: "Game library not available",
     });
 
-  const directory = query.directory ?? game.libraryPath;
+  const directory = query.directory ?? (query.archive ? "" : game.libraryPath);
   try {
     return {
       directory,
-      entries: await listInstallerEntries(library.filesystemRoot(), directory),
+      entries: query.archive
+        ? await browseInstallerZip(
+            library.filesystemRoot(),
+            query.archive,
+            directory,
+            (file) => dropletInterface.listFiles(file),
+          )
+        : await listInstallerEntries(library.filesystemRoot(), directory),
     };
   } catch {
     throw createError({

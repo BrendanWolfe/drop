@@ -67,7 +67,12 @@ pub fn emulator_install_path(
     if installed_version != version_id {
         return None;
     }
-    let install_dir = db.applications.resolve_install_path(meta).ok()?.to_string_lossy().into_owned();
+    let install_dir = db
+        .applications
+        .resolve_install_path(meta)
+        .ok()?
+        .to_string_lossy()
+        .into_owned();
     if !std::path::Path::new(&install_dir).is_dir() {
         return None;
     }
@@ -123,10 +128,11 @@ pub fn refresh_installed_launches(
     let Some(current) = db.applications.game_versions.get_mut(expected_version) else {
         return false;
     };
-    if current.launches == remote.launches {
+    if current.launches == remote.launches && current.setups == remote.setups {
         return false;
     }
     current.launches = remote.launches;
+    current.setups = remote.setups;
     true
 }
 
@@ -149,6 +155,38 @@ pub fn direct_open_launches<'a>(
 }
 
 /// Match the installed game's pinned launches, not the latest server version.
+fn dependencies(
+    version: &database::GameVersion,
+) -> impl Iterator<
+    Item = (
+        Platform,
+        bool,
+        &database::models::data::LaunchConfigurationEmulator,
+    ),
+> {
+    version
+        .launches
+        .iter()
+        .filter_map(|launch| {
+            launch
+                .emulator
+                .as_ref()
+                .map(|emu| (launch.platform, launch.proton_compatible, emu))
+        })
+        .chain(
+            version
+                .setups
+                .iter()
+                .filter(|_| version.locate_after_setup)
+                .filter_map(|setup| {
+                    setup
+                        .emulator
+                        .as_ref()
+                        .map(|emu| (setup.platform, setup.proton_compatible, emu))
+                }),
+        )
+}
+
 pub fn missing_emulators(db: &Database, game_id: &str, host: Platform) -> Vec<MissingEmulator> {
     let Some(meta) = db.applications.installed_game_version.get(game_id) else {
         return vec![];
@@ -157,15 +195,10 @@ pub fn missing_emulators(db: &Database, game_id: &str, host: Platform) -> Vec<Mi
         return vec![];
     };
     let mut missing = Vec::<MissingEmulator>::new();
-    for launch in &version.launches {
-        if launch.platform != meta.target_platform
-            || !launch.platform.can_run_on(host, launch.proton_compatible)
-        {
+    for (platform, proton_compatible, dependency) in dependencies(version) {
+        if platform != meta.target_platform || !platform.can_run_on(host, proton_compatible) {
             continue;
         }
-        let Some(dependency) = &launch.emulator else {
-            continue;
-        };
         let installed = emulator_install_path(
             db,
             &dependency.game_id,
@@ -197,13 +230,11 @@ pub fn required_by(db: &Database, emulator: &DownloadableMetadata) -> Vec<Downlo
             && matches!(db.applications.game_statuses.get(&meta.id),
                 Some(GameDownloadStatus::Installed { version_id, .. }) if version_id == &meta.version)
             && db.applications.game_versions.get(&meta.version).is_some_and(|version| {
-                version.launches.iter().any(|launch| {
-                    launch.platform == meta.target_platform
+                dependencies(version).any(|(platform, _, dependency)| {
+                    platform == meta.target_platform
                         && meta.target_platform == emulator.target_platform
-                        && launch.emulator.as_ref().is_some_and(|dependency| {
-                            dependency.game_id == emulator.id
+                        && dependency.game_id == emulator.id
                                 && dependency.version_id == emulator.version
-                        })
                 })
             })
     }).cloned().collect::<Vec<_>>();
@@ -369,18 +400,51 @@ mod tests {
     };
     use serde_json::json;
 
-    fn add_install(db: &mut Database, id: &str, version: &str, platform: Platform, path: &std::path::Path, emulator_version: Option<&str>) -> DownloadableMetadata {
+    fn add_install(
+        db: &mut Database,
+        id: &str,
+        version: &str,
+        platform: Platform,
+        path: &std::path::Path,
+        emulator_version: Option<&str>,
+    ) -> DownloadableMetadata {
         let emulator = emulator_version.map(|version| json!({ "gameId": "emu", "versionId": version, "launchId": format!("{version}-launch") }));
         let version_data = serde_json::from_value(json!({
             "gameId": id, "versionId": version, "versionPath": version, "onlySetup": false, "versionIndex": 0, "delta": false,
             "launches": [{ "launchId": format!("{version}-launch"), "name": "Play", "command": "launcher", "platform": platform, "protonCompatible": true, "emulator": emulator }], "setups": []
         })).unwrap();
-        db.applications.game_versions.insert(version.into(), version_data);
-        let meta = DownloadableMetadata::new(id.into(), version.into(), platform, if id == "emu" { DownloadType::Emulator } else { DownloadType::Game });
-        db.applications.record_installation(&meta, GameDownloadStatus::Installed { install_type: InstalledGameType::Installed, install_dir: path.to_string_lossy().into_owned(), version_id: version.into(), update_available: false });
+        db.applications
+            .game_versions
+            .insert(version.into(), version_data);
+        let meta = DownloadableMetadata::new(
+            id.into(),
+            version.into(),
+            platform,
+            if id == "emu" {
+                DownloadType::Emulator
+            } else {
+                DownloadType::Game
+            },
+        );
+        db.applications.record_installation(
+            &meta,
+            GameDownloadStatus::Installed {
+                install_type: InstalledGameType::Installed,
+                install_dir: path.to_string_lossy().into_owned(),
+                version_id: version.into(),
+                update_available: false,
+            },
+        );
         if path.is_dir() {
-            crate::downloads::drop_data::DropData::new(id.into(), version.into(), platform,
-                path.to_path_buf(), Default::default(), None).write();
+            crate::downloads::drop_data::DropData::new(
+                id.into(),
+                version.into(),
+                platform,
+                path.to_path_buf(),
+                Default::default(),
+                None,
+            )
+            .write();
         }
         meta
     }
@@ -490,22 +554,92 @@ mod tests {
     fn games_resolve_different_emulator_versions_without_switching_or_redownloading() {
         let root = tempfile::tempdir().unwrap();
         let mut db = Database::new(root.path(), None, root.path().join("cache"));
-        for name in ["v1", "v2", "game-a", "game-b"] { std::fs::create_dir(root.path().join(name)).unwrap(); }
-        let v1 = add_install(&mut db, "emu", "v1", Platform::Linux, &root.path().join("v1"), None);
-        let v2 = add_install(&mut db, "emu", "v2", Platform::Linux, &root.path().join("v2"), None);
-        let a = add_install(&mut db, "game-a", "game-a-v1", Platform::Linux, &root.path().join("game-a"), Some("v1"));
-        add_install(&mut db, "game-b", "game-b-v1", Platform::Linux, &root.path().join("game-b"), Some("v2"));
+        for name in ["v1", "v2", "game-a", "game-b"] {
+            std::fs::create_dir(root.path().join(name)).unwrap();
+        }
+        let v1 = add_install(
+            &mut db,
+            "emu",
+            "v1",
+            Platform::Linux,
+            &root.path().join("v1"),
+            None,
+        );
+        let v2 = add_install(
+            &mut db,
+            "emu",
+            "v2",
+            Platform::Linux,
+            &root.path().join("v2"),
+            None,
+        );
+        let a = add_install(
+            &mut db,
+            "game-a",
+            "game-a-v1",
+            Platform::Linux,
+            &root.path().join("game-a"),
+            Some("v1"),
+        );
+        add_install(
+            &mut db,
+            "game-b",
+            "game-b-v1",
+            Platform::Linux,
+            &root.path().join("game-b"),
+            Some("v2"),
+        );
         assert!(missing_emulators(&db, "game-a", Platform::Linux).is_empty());
         assert!(missing_emulators(&db, "game-b", Platform::Linux).is_empty());
-        assert_eq!(emulator_install_path(&db, "emu", "v1", Platform::Linux, &["v1-launch".into()], Platform::Linux).unwrap(), root.path().join("v1").to_str().unwrap());
-        assert_eq!(emulator_install_path(&db, "emu", "v2", Platform::Linux, &["v2-launch".into()], Platform::Linux).unwrap(), root.path().join("v2").to_str().unwrap());
-        assert!(emulator_install_path(&db, "emu", "v1", Platform::Windows, &[], Platform::Linux).is_none());
-        assert!(emulator_install_path(&db, "emu", "v1", Platform::Linux, &["v2-launch".into()], Platform::Linux).is_none());
+        assert_eq!(
+            emulator_install_path(
+                &db,
+                "emu",
+                "v1",
+                Platform::Linux,
+                &["v1-launch".into()],
+                Platform::Linux
+            )
+            .unwrap(),
+            root.path().join("v1").to_str().unwrap()
+        );
+        assert_eq!(
+            emulator_install_path(
+                &db,
+                "emu",
+                "v2",
+                Platform::Linux,
+                &["v2-launch".into()],
+                Platform::Linux
+            )
+            .unwrap(),
+            root.path().join("v2").to_str().unwrap()
+        );
+        assert!(
+            emulator_install_path(&db, "emu", "v1", Platform::Windows, &[], Platform::Linux)
+                .is_none()
+        );
+        assert!(
+            emulator_install_path(
+                &db,
+                "emu",
+                "v1",
+                Platform::Linux,
+                &["v2-launch".into()],
+                Platform::Linux
+            )
+            .is_none()
+        );
         assert_eq!(required_by(&db, &v1)[0].id, "game-a");
         assert_eq!(required_by(&db, &v2)[0].id, "game-b");
         // Running one build blocks its deletion/repair, not other builds.
-        db.applications.transient_statuses.insert(a, ApplicationTransientStatus::Running {});
-        assert!(begin_emulator_uninstall(&mut db, "emu", "v1", Platform::Linux, &["game-a".into()]).is_err());
+        db.applications
+            .transient_statuses
+            .insert(a, ApplicationTransientStatus::Running {});
+        assert!(
+            begin_emulator_uninstall(&mut db, "emu", "v1", Platform::Linux, &["game-a".into()])
+                .is_err()
+        );
         assert!(reserve_emulator_download(&mut db, &v1).is_err());
         assert!(reserve_emulator_download(&mut db, &v2).unwrap());
         assert!(!reserve_emulator_download(&mut db, &v2).unwrap());
@@ -513,7 +647,9 @@ mod tests {
         assert_eq!(missing_emulators(&db, "game-b", Platform::Linux).len(), 1);
         db.applications.transient_statuses.clear();
         assert!(begin_emulator_uninstall(&mut db, "emu", "v1", Platform::Linux, &[]).is_err());
-        let (meta, path) = begin_emulator_uninstall(&mut db, "emu", "v1", Platform::Linux, &["game-a".into()]).unwrap();
+        let (meta, path) =
+            begin_emulator_uninstall(&mut db, "emu", "v1", Platform::Linux, &["game-a".into()])
+                .unwrap();
         assert!(reserve_emulator_download(&mut db, &v1).is_err());
         std::fs::remove_dir_all(path).unwrap();
         finish_emulator_uninstall(&mut db, &meta, true);
@@ -521,7 +657,10 @@ mod tests {
         assert!(missing_emulators(&db, "game-b", Platform::Linux).is_empty());
         assert!(root.path().join("v2").exists());
         assert!(root.path().join("game-a").exists());
-        assert_eq!(db.applications.installed_game_version["game-a"].version, "game-a-v1");
+        assert_eq!(
+            db.applications.installed_game_version["game-a"].version,
+            "game-a-v1"
+        );
     }
 
     #[test]
@@ -531,17 +670,26 @@ mod tests {
         let path = root.path().join("emulator-v1");
         std::fs::create_dir(&path).unwrap();
         let meta = add_install(&mut db, "emu", "v1", Platform::Linux, &path, None);
-        let (reserved, _) = begin_emulator_uninstall(&mut db, "emu", "v1", Platform::Linux, &[]).unwrap();
+        let (reserved, _) =
+            begin_emulator_uninstall(&mut db, "emu", "v1", Platform::Linux, &[]).unwrap();
         finish_emulator_uninstall(&mut db, &reserved, false);
-        assert!(db.applications.emulator_installation("emu", "v1", Platform::Linux).is_some());
-        assert!(emulator_install_path(&db, "emu", "v1", Platform::Linux, &[], Platform::Linux).is_none());
+        assert!(
+            db.applications
+                .emulator_installation("emu", "v1", Platform::Linux)
+                .is_some()
+        );
+        assert!(
+            emulator_install_path(&db, "emu", "v1", Platform::Linux, &[], Platform::Linux)
+                .is_none()
+        );
         assert!(reserve_emulator_download(&mut db, &meta).unwrap());
     }
 
     #[test]
     fn uninstall_refuses_overlapping_legacy_folders() {
         let root = tempfile::tempdir().unwrap();
-        let nested = root.path().join("nested"); std::fs::create_dir(&nested).unwrap();
+        let nested = root.path().join("nested");
+        std::fs::create_dir(&nested).unwrap();
         let mut db = Database::new(root.path(), None, root.path().join("cache"));
         add_install(&mut db, "emu", "v1", Platform::Linux, root.path(), None);
         add_install(&mut db, "emu", "v2", Platform::Linux, &nested, None);

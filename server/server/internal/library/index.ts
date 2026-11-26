@@ -6,6 +6,7 @@
  */
 
 import path from "path";
+import { realpath } from "node:fs/promises";
 import prisma from "../db/database";
 import { fuzzy } from "fast-fuzzy";
 import type { TaskRunContext } from "../tasks";
@@ -25,6 +26,16 @@ import type { Prisma } from "~/prisma/client/client";
 import { validateEmulatorProfile } from "./emulator-profile";
 import { validateInstallerInputs } from "./installer-library-inputs";
 import { normalizeInstallerLaunchPath } from "./installer-input-paths";
+import { companionArchiveManifest } from "./manifest/companion-archive";
+import {
+  companionName,
+  configuredCompanionRoots,
+  resolveFilesystemCompanion,
+} from "./installer-filesystem";
+import {
+  installerAssetPrefix,
+  validateAssetManifest,
+} from "./installer-assets";
 import { dropletInterface } from "../services/torrential/droplet-interface";
 import {
   installerBundlePath,
@@ -88,6 +99,27 @@ class LibraryManager {
 
   getLibrary(libraryId: string): LibraryProvider<unknown> | undefined {
     return this.libraries.get(libraryId);
+  }
+
+  async companionLibraryRoots() {
+    const libraries = await prisma.library.findMany({
+      select: { options: true },
+    });
+    return (
+      await Promise.all(
+        libraries.map(async ({ options }) => {
+          const base = (options as { baseDir?: string }).baseDir;
+          if (!base) return [];
+          return [
+            path.resolve(base),
+            await realpath(base).catch((error) => {
+              if (error.code === "ENOENT") return path.resolve(base);
+              throw error;
+            }),
+          ];
+        }),
+      )
+    ).flat();
   }
 
   async fetchLibraries(): Promise<WorkingLibrarySource[]> {
@@ -512,10 +544,25 @@ class LibraryManager {
     });
     if (!game || !game.libraryId) return undefined;
 
-    if (game.isEmulated && metadata.onlySetup)
+    const installer = metadata.installerPackage;
+    const flow = metadata.installerFlow;
+    const locateAfterSetup = !!(installer || flow);
+    if (
+      flow &&
+      (!metadata.onlySetup ||
+        metadata.delta ||
+        game.type !== GameType.Game ||
+        metadata.launches.length)
+    )
       throw createError({
         statusCode: 400,
-        message: "Emulated games cannot be setup-only.",
+        message:
+          "Installer mode requires a complete game version in Setup mode.",
+      });
+    if (game.isEmulated && metadata.onlySetup && !locateAfterSetup)
+      throw createError({
+        statusCode: 400,
+        message: "Use installer mode for an emulated Setup version.",
       });
     if (game.type === GameType.Emulator && metadata.onlySetup)
       throw createError({
@@ -523,28 +570,61 @@ class LibraryManager {
         message:
           "Emulators must be portable programs, not setup-only packages.",
       });
-    for (const launch of metadata.launches) {
+    const setups = installer
+      ? [{ ...installer, launch: installer.executable }]
+      : metadata.setups;
+    if (
+      locateAfterSetup &&
+      new Set(setups.map(({ platform }) => platform)).size !== setups.length
+    )
+      throw createError({
+        statusCode: 400,
+        message: "Choose one installer command per platform.",
+      });
+    const emulatedInstaller =
+      locateAfterSetup &&
+      (game.isEmulated || setups.some(({ emulatorId }) => !!emulatorId));
+    for (const setup of setups) {
+      if (!setup.launch.trim() || (setup.emulatorId && !locateAfterSetup))
+        throw createError({
+          statusCode: 400,
+          message:
+            "Provide a setup command. Setup emulator bindings are only used with installer mode.",
+        });
+      if (emulatedInstaller && !setup.emulatorId)
+        throw createError({
+          statusCode: 400,
+          message:
+            "Choose the emulator used to play each installed game build.",
+        });
+    }
+    for (const launch of [...metadata.launches, ...setups]) {
       if (!launch.launch.trim())
         throw createError({
           statusCode: 400,
           message:
             "Launch paths cannot be empty. Use . for a UI-first game folder.",
         });
-      if (game.isEmulated && !launch.emulatorId)
+      if (
+        game.isEmulated &&
+        !metadata.onlySetup &&
+        metadata.launches.some((item) => item === launch) &&
+        !launch.emulatorId
+      )
         throw createError({
           statusCode: 400,
           message: "Select an emulator version for every emulated game launch.",
         });
-      if (launch.emulatorProfile) {
+      const profile = metadata.launches.find(
+        (item) => item === launch,
+      )?.emulatorProfile;
+      if (profile) {
         if (game.type !== GameType.Emulator)
           throw createError({
             statusCode: 400,
             message: "Only emulators can define emulator profiles.",
           });
-        const error = validateEmulatorProfile(
-          launch.emulatorProfile,
-          launch.launch,
-        );
+        const error = validateEmulatorProfile(profile, launch.launch);
         if (error) throw createError({ statusCode: 400, message: error });
       }
       if (launch.emulatorId) {
@@ -557,7 +637,11 @@ class LibraryManager {
           !emulator ||
           emulator.gameVersion.game.type !== GameType.Emulator ||
           emulator.gameVersion.onlySetup ||
-          emulator.platform !== launch.platform
+          emulator.platform !== launch.platform ||
+          (setups.some((item) => item === launch) &&
+            launch.platform === "Windows" &&
+            launch.protonCompatible &&
+            !emulator.protonCompatible)
         )
           throw createError({
             statusCode: 400,
@@ -575,7 +659,6 @@ class LibraryManager {
     const library = this.libraries.get(game.libraryId);
     if (!library) return undefined;
 
-    const installer = metadata.installerPackage;
     let installerFiles:
       | Awaited<ReturnType<typeof resolveInstallerFiles>>
       | undefined;
@@ -584,6 +667,16 @@ class LibraryManager {
     let installerLibraryInputs:
       | Awaited<ReturnType<typeof validateInstallerInputs>>
       | undefined;
+    const filesystemInputs = flow?.filesystemInputs ?? [];
+    const libraryInputs = [
+      ...(installer?.libraryInputs ?? []),
+      ...(flow?.libraryInputs ?? []),
+    ];
+    if (filesystemInputs.length + libraryInputs.length > 24)
+      throw createError({
+        statusCode: 400,
+        message: "Choose at most 24 companion files or folders.",
+      });
     if (installer) {
       if (
         !metadata.onlySetup ||
@@ -591,14 +684,13 @@ class LibraryManager {
         metadata.archiveDownload ||
         version.type !== "local" ||
         game.type !== GameType.Game ||
-        game.isEmulated ||
         metadata.setups.length ||
         metadata.launches.length
       )
         throw createError({
           statusCode: 400,
           message:
-            "Select an installer package for a complete, non-emulated game in Setup mode.",
+            "Select an installer package for a complete game in Setup mode.",
         });
       try {
         installerLaunchPath = normalizeInstallerLaunchPath(
@@ -618,9 +710,54 @@ class LibraryManager {
               : "One or more installer files are no longer available.",
         });
       }
+    }
+    const resolveFilesystemInputs = async () => {
+      if (!filesystemInputs.length) return [];
+      const roots = configuredCompanionRoots();
+      const libraries = await this.companionLibraryRoots();
+      return Promise.all(
+        filesystemInputs.map((input) =>
+          resolveFilesystemCompanion(input, roots, libraries, (source) =>
+            dropletInterface.listFiles(source, true),
+          ),
+        ),
+      );
+    };
+    if (locateAfterSetup) {
+      try {
+        installerLaunchPath = normalizeInstallerLaunchPath(
+          flow?.launchPath ?? installer?.launchPath ?? "",
+        );
+        const files = await resolveFilesystemInputs();
+        if (
+          new Set(
+            files.map(({ source, kind, archiveEntry }) =>
+              JSON.stringify([source, kind, archiveEntry]),
+            ),
+          ).size !== files.length ||
+          new Set(
+            [
+              ...files.map(({ name }) => name),
+              ...(flow?.libraryInputs ?? []).map(({ name }) =>
+                companionName(name),
+              ),
+            ].map((name) => name.toLowerCase()),
+          ).size !==
+            files.length + (flow?.libraryInputs.length ?? 0)
+        )
+          throw new Error("Choose distinct companion sources and names.");
+      } catch (cause) {
+        throw createError({
+          statusCode: 400,
+          message:
+            cause instanceof Error && !("code" in cause)
+              ? cause.message
+              : "One or more companion paths are not available.",
+        });
+      }
       installerLibraryInputs = await validateInstallerInputs(
         gameId,
-        installer.libraryInputs ?? [],
+        libraryInputs,
         this.listInstallerArchive.bind(this),
       );
     }
@@ -649,184 +786,249 @@ class LibraryManager {
           let manifest;
           let fileList;
           let installerBundleId: string | null = null;
+          try {
+            const indexedAssets = [];
+            const filesystem = await resolveFilesystemInputs();
+            const steps = filesystem.length + 1;
 
-          if (installerFiles) {
-            installerBundleId = crypto.randomUUID();
-            versionPath = version.identifier;
-            const directory = installerBundlePath(installerBundleId);
-            logger.info("Copying selected installer files");
-            try {
-              const currentFiles = await resolveInstallerFiles(
-                library.filesystemRoot(),
-                [installer!.executable, ...installer!.files],
-              );
-              await snapshotInstallerFiles(directory, currentFiles);
-              manifest = await dropletInterface.generateDropletManifest(
-                directory,
-                (value) => progress(value * 0.9),
-                (value) => logger.info(value),
-              );
-              fileList = currentFiles.map(({ name }) => name);
-            } catch (cause) {
-              await removeInstallerBundles([{ installerBundleId }]);
-              throw cause;
-            }
-          } else if (version.type === "local") {
-            versionPath = version.identifier;
-            // First, create the manifest via droplet.
-            // This takes up 90% of our progress, so we wrap it in a *0.9
-
-            manifest = await library.generateDropletManifest(
-              game.libraryPath,
-              versionPath,
-              (value) => {
-                progress(value * 0.9);
-              },
-              (value) => {
-                logger.info(value);
-              },
-              metadata.archiveDownload,
-            );
-            if (metadata.archiveDownload) {
-              const parsed = castManifest(manifest);
-              if (parsed.version !== "archive-v1" || !parsed.archive)
-                throw new Error(
-                  "The depot does not support archive downloads. Update Torrential and retry.",
+            if (installerFiles) {
+              installerBundleId = crypto.randomUUID();
+              versionPath = version.identifier;
+              const directory = installerBundlePath(installerBundleId);
+              logger.info("Copying selected installer files");
+              try {
+                const currentFiles = await resolveInstallerFiles(
+                  library.filesystemRoot(),
+                  [installer!.executable, ...installer!.files],
                 );
-              fileList = [".drop-archive"];
-            } else {
-              fileList = await library.versionReaddir(
+                await snapshotInstallerFiles(directory, currentFiles);
+                manifest = await dropletInterface.generateDropletManifest(
+                  directory,
+                  (value) => progress((value * 0.9) / steps),
+                  (value) => logger.info(value),
+                );
+                fileList = currentFiles.map(({ name }) => name);
+              } catch (cause) {
+                await removeInstallerBundles([{ installerBundleId }]);
+                throw cause;
+              }
+            } else if (version.type === "local") {
+              versionPath = version.identifier;
+              // First, create the manifest via droplet.
+              // This takes up 90% of our progress, so we wrap it in a *0.9
+
+              manifest = await library.generateDropletManifest(
                 game.libraryPath,
                 versionPath,
-              );
-            }
-            logger.info("Created manifest successfully!");
-          } else if (version.type === "depot" && unimportedVersion) {
-            manifest = castManifest(unimportedVersion.manifest);
-            fileList = unimportedVersion.fileList;
-            progress(90);
-          } else {
-            throw "Could not find or create manifest for this version.";
-          }
-
-          const largestIndex = await prisma.gameVersion
-            .findFirst({
-              where: { gameId: gameId },
-              orderBy: {
-                versionIndex: "desc",
-              },
-              select: {
-                versionIndex: true,
-              },
-            })
-            .catch(async (cause) => {
-              await removeInstallerBundles([{ installerBundleId }]);
-              throw cause;
-            });
-          const currentIndex = largestIndex ? largestIndex.versionIndex + 1 : 0;
-
-          // Then, create the database object
-          const newVersion = await prisma.gameVersion
-            .create({
-              data: {
-                game: {
-                  connect: {
-                    id: gameId,
-                  },
+                (value) => {
+                  progress((value * 0.9) / steps);
                 },
+                (value) => {
+                  logger.info(value);
+                },
+                metadata.archiveDownload,
+              );
+              if (metadata.archiveDownload) {
+                const parsed = castManifest(manifest);
+                if (parsed.version !== "archive-v1" || !parsed.archive)
+                  throw new Error(
+                    "The depot does not support archive downloads. Update Torrential and retry.",
+                  );
+                fileList = [".drop-archive"];
+              } else {
+                fileList = await library.versionReaddir(
+                  game.libraryPath,
+                  versionPath,
+                );
+              }
+              logger.info("Created manifest successfully!");
+            } else if (version.type === "depot" && unimportedVersion) {
+              manifest = castManifest(unimportedVersion.manifest);
+              fileList = unimportedVersion.fileList;
+              progress(90 / steps);
+            } else {
+              throw "Could not find or create manifest for this version.";
+            }
 
-                displayName: metadata.displayName ?? null,
+            for (const [index, asset] of filesystem.entries()) {
+              logger.info(`Indexing companion: ${asset.name}`);
+              const existing = await prisma.installerAsset.findFirst({
+                where: { filesystemKey: asset.key },
+                select: { manifest: true },
+              });
+              const raw =
+                existing?.manifest ??
+                (await dropletInterface.generateDropletManifest(
+                  asset.backend,
+                  (value) =>
+                    progress((((index + 1) * 100 + value) * 0.9) / steps),
+                  (value) => logger.info(value),
+                  false,
+                  asset.targets,
+                ));
+              validateAssetManifest(raw, asset.targets);
+              indexedAssets.push({
+                id: installerAssetPrefix + crypto.randomUUID(),
+                name: asset.name,
+                sourcePath: asset.source,
+                targetPath: asset.name,
+                filesystemKind: asset.kind,
+                filesystemKey: asset.key,
+                filesystemEntry: asset.archiveEntry,
+                manifest: raw,
+              });
+            }
+            for (const input of installerLibraryInputs ?? []) {
+              const source = await prisma.gameVersion.findUniqueOrThrow({
+                where: { versionId: input.versionId },
+                select: { fileList: true },
+              });
+              if (
+                source.fileList.length === 1 &&
+                source.fileList[0] === ".drop-archive"
+              )
+                await companionArchiveManifest(input.gameId, input.versionId);
+            }
 
-                versionPath,
-                dropletManifest: manifest,
-                fileList,
-                versionIndex: currentIndex,
-                delta: metadata.delta,
+            const largestIndex = await prisma.gameVersion
+              .findFirst({
+                where: { gameId: gameId },
+                orderBy: {
+                  versionIndex: "desc",
+                },
+                select: {
+                  versionIndex: true,
+                },
+              })
+              .catch(async (cause) => {
+                await removeInstallerBundles([{ installerBundleId }]);
+                throw cause;
+              });
+            const currentIndex = largestIndex
+              ? largestIndex.versionIndex + 1
+              : 0;
 
-                onlySetup: metadata.onlySetup,
-                installerBundleId,
-                installerLibraryInputs,
-                installerLaunchPath,
-                setups: {
-                  createMany: {
-                    data:
-                      installer && installerCommand
-                        ? [
-                            {
-                              command: installerCommand,
-                              platform: installer.platform,
+            // Then, create the database object
+            const newVersion = await prisma.gameVersion
+              .create({
+                data: {
+                  game: {
+                    connect: {
+                      id: gameId,
+                    },
+                  },
+
+                  displayName: metadata.displayName ?? null,
+
+                  versionPath,
+                  dropletManifest: manifest,
+                  fileList,
+                  versionIndex: currentIndex,
+                  delta: metadata.delta,
+
+                  onlySetup: metadata.onlySetup,
+                  locateAfterSetup:
+                    !!flow || setups.some(({ emulatorId }) => !!emulatorId),
+                  installerBundleId,
+                  installerLibraryInputs,
+                  installerLaunchPath,
+                  installerAssets: indexedAssets.length
+                    ? { create: indexedAssets }
+                    : undefined,
+                  setups: {
+                    createMany: {
+                      data:
+                        installer && installerCommand
+                          ? [
+                              {
+                                command: installerCommand,
+                                platform: installer.platform,
+                                emulatorId: installer.emulatorId,
+                                protonCompatible:
+                                  installer.platform === "Windows" &&
+                                  !!installer.protonCompatible,
+                              },
+                            ]
+                          : metadata.setups.map((v) => ({
+                              command: v.launch,
+                              platform: v.platform,
+                              emulatorId: v.emulatorId,
                               protonCompatible:
-                                installer.platform === "Windows" &&
-                                !!installer.protonCompatible,
-                            },
-                          ]
-                        : metadata.setups.map((v) => ({
+                                v.platform === "Windows" &&
+                                !!v.protonCompatible,
+                            })),
+                    },
+                  },
+
+                  launches: {
+                    createMany: !metadata.onlySetup
+                      ? {
+                          data: metadata.launches.map((v) => ({
+                            name: v.name,
                             command: v.launch,
                             platform: v.platform,
                             protonCompatible:
                               v.platform === "Windows" && !!v.protonCompatible,
+                            ...(v.emulatorId && game.type === "Game"
+                              ? {
+                                  emulatorId: v.emulatorId,
+                                }
+                              : undefined),
+                            emulatorSuggestions:
+                              game.type === "Emulator"
+                                ? (v.suggestions ?? [])
+                                : [],
+                            ...(v.emulatorProfile
+                              ? { emulatorProfile: v.emulatorProfile }
+                              : {}),
                           })),
+                        }
+                      : { data: [] },
                   },
                 },
+              })
+              .catch(async (cause) => {
+                await removeInstallerBundles([{ installerBundleId }]);
+                throw cause;
+              });
+            logger.info("Successfully created version!");
 
-                launches: {
-                  createMany: !metadata.onlySetup
-                    ? {
-                        data: metadata.launches.map((v) => ({
-                          name: v.name,
-                          command: v.launch,
-                          platform: v.platform,
-                          protonCompatible:
-                            v.platform === "Windows" && !!v.protonCompatible,
-                          ...(v.emulatorId && game.type === "Game"
-                            ? {
-                                emulatorId: v.emulatorId,
-                              }
-                            : undefined),
-                          emulatorSuggestions:
-                            game.type === "Emulator"
-                              ? (v.suggestions ?? [])
-                              : [],
-                          ...(v.emulatorProfile
-                            ? { emulatorProfile: v.emulatorProfile }
-                            : {}),
-                        })),
-                      }
-                    : { data: [] },
+            notificationSystem.systemPush({
+              nonce: `version-create-${gameId}-${version}`,
+              title: `'${game.mName}' ('${version.name}') finished importing.`,
+              description: `Drop finished importing version ${version.name} for ${game.mName}.`,
+              actions: [`View|/admin/library/${gameId}`],
+              acls: ["system:import:version:read"],
+            });
+
+            // Pre-cache sizes (full versions do not need a download manifest).
+            try {
+              await gameSizeManager.getVersionSize(newVersion.versionId);
+            } catch (e) {
+              logger.warn(`Failed to pre-cache game size and manifest: ${e}`);
+            }
+
+            if (version.type === "depot") {
+              // SAFETY: we can only reach this if the type is depot and identifier is valid
+              // eslint-disable-next-line drop/no-prisma-delete
+              await prisma.unimportedGameVersion.delete({
+                where: {
+                  id: version.identifier,
                 },
-              },
-            })
-            .catch(async (cause) => {
+              });
+            }
+            progress(100);
+          } catch (cause) {
+            // After the database commit the bundle is owned by the version.
+            if (
+              installerBundleId &&
+              !(await prisma.gameVersion.count({
+                where: { installerBundleId },
+              }))
+            )
               await removeInstallerBundles([{ installerBundleId }]);
-              throw cause;
-            });
-          logger.info("Successfully created version!");
-
-          notificationSystem.systemPush({
-            nonce: `version-create-${gameId}-${version}`,
-            title: `'${game.mName}' ('${version.name}') finished importing.`,
-            description: `Drop finished importing version ${version.name} for ${game.mName}.`,
-            actions: [`View|/admin/library/${gameId}`],
-            acls: ["system:import:version:read"],
-          });
-
-          // Pre-cache sizes (full versions do not need a download manifest).
-          try {
-            await gameSizeManager.getVersionSize(newVersion.versionId);
-          } catch (e) {
-            logger.warn(`Failed to pre-cache game size and manifest: ${e}`);
+            throw cause;
           }
-
-          if (version.type === "depot") {
-            // SAFETY: we can only reach this if the type is depot and identifier is valid
-            // eslint-disable-next-line drop/no-prisma-delete
-            await prisma.unimportedGameVersion.delete({
-              where: {
-                id: version.identifier,
-              },
-            });
-          }
-          progress(100);
         },
       },
       parentTask,
@@ -871,9 +1073,12 @@ class LibraryManager {
 
   async deleteGameVersion(gameId: string, version: string) {
     if (
-      await prisma.launchConfiguration.count({
+      (await prisma.launchConfiguration.count({
         where: { emulator: { versionId: version, gameVersion: { gameId } } },
-      })
+      })) ||
+      (await prisma.setupConfiguration.count({
+        where: { emulator: { versionId: version, gameVersion: { gameId } } },
+      }))
     )
       throw createError({
         statusCode: 409,
@@ -893,9 +1098,12 @@ class LibraryManager {
 
   async deleteGame(gameId: string) {
     if (
-      await prisma.launchConfiguration.count({
+      (await prisma.launchConfiguration.count({
         where: { emulator: { gameVersion: { gameId } } },
-      })
+      })) ||
+      (await prisma.setupConfiguration.count({
+        where: { emulator: { gameVersion: { gameId } } },
+      }))
     )
       throw createError({
         statusCode: 409,

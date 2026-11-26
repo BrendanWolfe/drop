@@ -41,7 +41,29 @@ are not inherited on redirects, even if the URL points to the Drop server.
 Signed download URLs are stored locally to support resume, not sent as admin
 telemetry or included in network error logs.
 
-## Installer packages
+## Installer versions
+
+Import the installer EXE or release ZIP as a normal game version, turn on
+**Setup mode** and **Locate the game after setup**, and choose the setup command.
+Archive downloads are fine for the installer ZIP. **Package selected installer
+files** is optional for hand-picked loose files. Put support DLLs and tools in
+the installer, not in the companion list. Existing loose-file bundles stay as-is.
+
+**Add server path** is for content outside the catalogue. Set
+`DROP_INSTALLER_COMPANION_ROOTS=/companions:/other-companions` on the server
+(colon-separated on Linux) and mount those roots read-only at identical paths
+for Drop Server and Torrential. Only point this at payload directories, never
+secrets or a whole filesystem. Paths in, or containing, a game library aren't
+allowed. Choose **Folder** to unpack a ZIP; an optional ZIP-relative path selects
+a single file or subfolder. Drop indexes the original files in place; keep them
+unchanged and available. Re-import as a new version when they change.
+
+On the desktop, use **Copy path** once the companion finishes, or **Download
+missing files** to retry an interrupted companion. Removing the installer
+download does not remove the installed game or shared filesystem companions.
+Completed filesystem companions with the same source and destination name are
+reused in the same install directory. Their files live in
+`.drop-installer-assets` beside the installer downloads.
 
 In Setup mode, admins can select companion files from a pinned version of
 another library game. Drop reuses that version's downloaded files if available.
@@ -49,11 +71,15 @@ Otherwise it adds the source game to the player's library and queues just the
 selected file, folder, or whole game, without installing its emulators. Use
 **Update** on the source game's page to finish installing it. Drop does not
 replace a different installed version automatically.
+The companion label does not rename or copy files inside a pinned game installation.
 
 Admins can set an optional **Expected launch file**, such as `bin/Game.exe`.
 After setup, **Locate game** shows it first if it exists in the selected folder.
 You can select a subfolder next to `setup.exe`, or a folder elsewhere. Removing
 the installer package does not remove the installed game files.
+For an emulated installer, choose a compatible pinned emulator when importing.
+Drop installs it as a Play dependency, not as part of the setup command. In
+**Locate game** you can select a game file or use the game folder itself.
 
 ## Administrator downloads page
 

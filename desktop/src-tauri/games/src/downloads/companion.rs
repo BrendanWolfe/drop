@@ -85,6 +85,7 @@ mod tests {
 
     fn input(kind: InstallerLibraryInputKind, path: &str) -> InstallerLibraryInput {
         InstallerLibraryInput {
+            name: None,
             game_id: "source".into(),
             version_id: "pinned".into(),
             game_name: "Source".into(),

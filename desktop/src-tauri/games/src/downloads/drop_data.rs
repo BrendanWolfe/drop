@@ -42,6 +42,8 @@ pub mod v1 {
         pub companion_only: bool,
         #[serde(default)]
         pub companion_files: super::super::companion::CompanionFiles,
+        #[serde(default)]
+        pub installer_asset_files: Option<HashMap<String, u64>>,
     }
 
     impl DropData {
@@ -66,6 +68,7 @@ pub mod v1 {
                 setup_completed: None,
                 companion_only: false,
                 companion_files: Default::default(),
+                installer_asset_files: None,
             }
         }
     }

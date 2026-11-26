@@ -153,7 +153,12 @@ pub fn uninstall_game_logic(meta: DownloadableMetadata, app_handle: &AppHandle) 
     if db_handle
         .applications
         .transient_statuses
-        .contains_key(&meta)
+        .keys()
+        .any(|item| {
+            item == &meta
+                || (item.id == meta.id
+                    && item.download_type == database::DownloadType::InstallerAsset)
+        })
     {
         warn!("refusing uninstall while an installation is in use");
         return;
@@ -175,6 +180,15 @@ pub fn uninstall_game_logic(meta: DownloadableMetadata, app_handle: &AppHandle) 
             .game_versions
             .get(&meta.version)
             .is_some_and(|version| version.locate_after_setup);
+    let installed_game = installer
+        .then(|| {
+            db_handle
+                .applications
+                .installer_locations
+                .get(&meta.id)
+                .map(|location| location.root.clone())
+        })
+        .flatten();
     db_handle
         .applications
         .transient_statuses
@@ -207,7 +221,11 @@ pub fn uninstall_game_logic(meta: DownloadableMetadata, app_handle: &AppHandle) 
         let app_handle = app_handle.clone();
         spawn(move || {
             let result = if installer {
-                crate::downloads::installer_files::remove(&install_path, &meta.id)
+                crate::downloads::installer_files::remove(
+                    &install_path,
+                    &meta.id,
+                    installed_game.as_deref(),
+                )
             } else {
                 remove_dir_all(install_path)
             };

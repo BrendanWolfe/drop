@@ -1,6 +1,7 @@
 use std::{
     path::PathBuf,
     sync::{Arc, nonpoison::Mutex},
+    time::Duration,
 };
 
 use crate::{
@@ -20,6 +21,11 @@ use games::downloads::download_agent::{CompanionRequest, GameDownloadAgent};
 use remote::{
     auth::generate_authorization_header, requests::generate_url, utils::DROP_CLIENT_ASYNC,
 };
+use tauri::Manager;
+
+// Only bounds the small metadata requests used to submit companion jobs;
+// archive indexing happens later in the download worker.
+const COMPANION_SUBMIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Keep the flat IPC fields backwards compatible.
@@ -96,10 +102,10 @@ pub async fn download_game(
             .iter()
             .find(|option| option.version_id == meta.version && option.platform == target_platform)
             .map(|option| option.folder_version_name().to_owned());
-        let installer_package = options.iter().any(|option| {
+        let installer_flow = options.iter().any(|option| {
             option.version_id == meta.version
                 && option.platform == target_platform
-                && option.installer_package
+                && option.installer_flow()
         });
 
         {
@@ -111,7 +117,7 @@ pub async fn download_game(
                 let is_installer = db.applications.game_versions.get(&installed.version)
                     .is_some_and(|version| version.locate_after_setup)
                     || games::downloads::installer_files::has_inventory(&path);
-                if is_installer != installer_package {
+                if is_installer != installer_flow {
                     return Err(ApplicationDownloadError::Archive(
                         "Remove the current download before switching between a game and an installer package.".into(),
                     ));
@@ -169,7 +175,7 @@ pub async fn download_game(
                     .map_err(ApplicationDownloadError::Archive)?;
             }
         }
-        let game_download_agent = if installer_package {
+        let game_download_agent = if installer_flow {
             GameDownloadAgent::new_installer(
                 meta.clone(),
                 base_dir,
@@ -202,19 +208,23 @@ pub async fn download_game(
             }
         };
 
+        let package = installer_flow.then(|| (game_download_agent.dropdata.base_path.clone(), target_platform));
         let game_download_agent =
             Arc::new(Box::new(game_download_agent) as Box<dyn Downloadable + Send + Sync>);
 
-        DOWNLOAD_MANAGER
-            .queue_download(game_download_agent.clone())
-            .await
-            .map_err(|error| ApplicationDownloadError::Archive(error.to_string()))?;
+        if let Err(error) = DOWNLOAD_MANAGER.queue_download(game_download_agent).await {
+            borrow_db_mut_checked().applications.transient_statuses.remove(&meta);
+            return Err(ApplicationDownloadError::Archive(error.to_string()));
+        }
 
-        if installer_package {
-            let failures = prepare_installer_companions(&meta.id, &meta.version, state, &app).await;
-            if !failures.is_empty() {
-                utils::app_emit!(&app, "installer_companion_error", (&meta.id, failures.join("\n")));
-            }
+        if let Some(package) = package {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let failures = prepare_installer_companions(&meta.id, &meta.version, package, app.state(), &app).await;
+                if !failures.is_empty() {
+                    utils::app_emit!(&app, "installer_companion_error", (&meta.id, failures.join("\n")));
+                }
+            });
         }
         Ok(())
     }
@@ -240,6 +250,7 @@ async fn companion_version(game: &str, version: &str) -> Result<database::GameVe
             "Authorization",
             generate_authorization_header().map_err(|e| e.to_string())?,
         )
+        .timeout(COMPANION_SUBMIT_TIMEOUT)
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -253,6 +264,7 @@ async fn companion_version(game: &str, version: &str) -> Result<database::GameVe
 async fn prepare_installer_companions(
     id: &str,
     version: &str,
+    package: (PathBuf, Platform),
     state: tauri::State<'_, Mutex<AppState>>,
     app: &tauri::AppHandle,
 ) -> Vec<String> {
@@ -261,6 +273,14 @@ async fn prepare_installer_companions(
         Ok(_) => return vec![],
         Err(error) => return vec![format!("Could not load installer companions: {error}")],
     };
+    let mut failures = vec![];
+    for asset in &version.installer_assets {
+        if let Err(error) =
+            queue_installer_asset(id, &version.version_id, &package.0, package.1, asset).await
+        {
+            failures.push(format!("{}: {error}", asset.name));
+        }
+    }
     let mut groups = std::collections::BTreeMap::<_, Vec<_>>::new();
     for input in version
         .installer_library_inputs
@@ -272,7 +292,6 @@ async fn prepare_installer_companions(
             .or_default()
             .push(input);
     }
-    let mut failures = vec![];
     for ((source, pinned), inputs) in groups {
         let name = inputs[0].game_name.clone();
         if let Err(error) = queue_companion_source(source, pinned, inputs, state.clone(), app).await
@@ -281,6 +300,95 @@ async fn prepare_installer_companions(
         }
     }
     failures
+}
+
+async fn queue_installer_asset(
+    id: &str,
+    version: &str,
+    package: &std::path::Path,
+    platform: Platform,
+    asset: &database::models::data::InstallerAsset,
+) -> Result<(), ApplicationDownloadError> {
+    use games::downloads::installer_files::{has_inventory, ready_asset};
+    let meta = DownloadableMetadata::new(
+        id.into(),
+        asset.id.clone(),
+        platform,
+        DownloadType::InstallerAsset,
+    );
+    {
+        let mut db = borrow_db_mut_checked();
+        if db.applications.transient_statuses.contains_key(&meta)
+            || ready_asset(package, id, asset).is_some()
+        {
+            return Ok(());
+        }
+        let owner =
+            DownloadableMetadata::new(id.into(), version.into(), platform, DownloadType::Game);
+        let active = db.applications.transient_statuses.get(&owner);
+        let same_install =
+            db.applications
+                .installed_game_version
+                .get(id)
+                .is_some_and(|installed| {
+                    installed.version == owner.version
+                        && installed.target_platform == owner.target_platform
+                        && installed.download_type == owner.download_type
+                })
+                && db
+                    .applications
+                    .resolve_install_path(&owner)
+                    .is_ok_and(|path| path == package);
+        if (!same_install
+            && !matches!(
+                active,
+                Some(
+                     database::ApplicationTransientStatus::Queued { version_id }
+                         | database::ApplicationTransientStatus::Downloading { version_id }
+                         | database::ApplicationTransientStatus::Extracting { version_id }
+                         | database::ApplicationTransientStatus::Validating { version_id }
+                ) if version_id == &owner.version
+            ))
+            || matches!(
+                active,
+                Some(database::ApplicationTransientStatus::Uninstalling {})
+            )
+            || !has_inventory(package)
+        {
+            return Err(ApplicationDownloadError::Archive(
+                "The matching installer download is no longer available.".into(),
+            ));
+        }
+        db.applications.transient_statuses.insert(
+            meta.clone(),
+            database::ApplicationTransientStatus::Queued {
+                version_id: meta.version.clone(),
+            },
+        );
+    }
+    let result = async {
+        let agent = GameDownloadAgent::new_installer_asset(
+            meta.clone(),
+            package,
+            asset,
+            DOWNLOAD_MANAGER.get_sender(),
+            DOWNLOAD_MANAGER.clone_depot_manager(),
+        )?;
+        DOWNLOAD_MANAGER
+            .queue_download(Arc::new(
+                Box::new(agent) as Box<dyn Downloadable + Send + Sync>
+            ))
+            .await
+            .map_err(|error| ApplicationDownloadError::Archive(error.to_string()))
+    }
+    .await;
+    if result.is_err() {
+        borrow_db_mut_checked()
+            .applications
+            .transient_statuses
+            .remove(&meta);
+    }
+    result
 }
 
 async fn queue_companion_source(
@@ -309,25 +417,41 @@ async fn queue_companion_source(
 
     let url = generate_url(&["/api/v1/client/collection/default/entry"], &[])
         .map_err(|e| e.to_string())?;
-    let response = remote::requests::make_authenticated_post(url, &serde_json::json!({"id": &id}))
+    let response = DROP_CLIENT_ASYNC
+        .post(url)
+        .header(
+            "Authorization",
+            generate_authorization_header().map_err(|e| e.to_string())?,
+        )
+        .json(&serde_json::json!({"id": &id}))
+        .timeout(COMPANION_SUBMIT_TIMEOUT)
+        .send()
         .await
         .map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err("Could not add the source game to your library.".into());
     }
     utils::app_emit!(app, "update_library", ());
-    let game = crate::games::fetch_game(id.clone(), state.clone())
-        .await
-        .map_err(|e| e.to_string())?;
+    let game = tokio::time::timeout(
+        COMPANION_SUBMIT_TIMEOUT,
+        crate::games::fetch_game(id.clone(), state.clone()),
+    )
+    .await
+    .map_err(|_| "Timed out loading the source game.")?
+    .map_err(|e| e.to_string())?;
     if game.game.game_type != "Game" {
         return Err("This source is not a library game.".into());
     }
-    let options = fetch_game_version_options_logic(id.clone(), state)
-        .await
-        .map_err(|e| e.to_string())?;
+    let options = tokio::time::timeout(
+        COMPANION_SUBMIT_TIMEOUT,
+        fetch_game_version_options_logic(id.clone(), state),
+    )
+    .await
+    .map_err(|_| "Timed out loading the source game’s versions.")?
+    .map_err(|e| e.to_string())?;
     let option = options
         .iter()
-        .find(|option| option.version_id == version && !option.installer_package)
+        .find(|option| option.version_id == version && !option.installer_flow())
         .ok_or("The pinned version is no longer available for this device.")?;
     let meta = DownloadableMetadata::new(id, version, option.platform, DownloadType::Game);
     let (directory, new_folder, configuration, request) = {
@@ -339,7 +463,10 @@ async fn queue_companion_source(
         let apps = &db.applications;
         let (directory, new_folder) =
             if let Some(existing) = apps.installed_game_version.get(&meta.id) {
-                if existing != &meta {
+                if existing.version != meta.version
+                    || existing.target_platform != meta.target_platform
+                    || existing.download_type != meta.download_type
+                {
                     return Err("A different build is installed.".into());
                 }
                 let path = apps.resolve_install_path(existing)?;
@@ -393,7 +520,6 @@ async fn queue_companion_source(
             configuration,
             request,
         )
-        .await
         .map_err(|e| e.to_string())?;
         DOWNLOAD_MANAGER
             .queue_download(Arc::new(
@@ -419,13 +545,18 @@ pub async fn retry_installer_companions(
     state: tauri::State<'_, Mutex<AppState>>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let version = {
+    let (version, package) = {
         let db = borrow_db_checked();
-        crate::local_games::installer_package_meta(&db, &id)?
-            .version
-            .clone()
+        let meta = crate::local_games::installer_package_meta(&db, &id)?;
+        (
+            meta.version.clone(),
+            (
+                db.applications.resolve_install_path(meta)?,
+                meta.target_platform,
+            ),
+        )
     };
-    let failures = prepare_installer_companions(&id, &version, state, &app).await;
+    let failures = prepare_installer_companions(&id, &version, package, state, &app).await;
     if failures.is_empty() {
         Ok(())
     } else {
